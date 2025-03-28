@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<routes>
+    <vType id="car" length="5" maxSpeed="33.33" speedFactor="1.0" speedDev="0.1" accel="1.7602138419831141" decel="4.90412296976052" sigma="0.7368143632937492" tau="0.4086771542075229" delta="0.4722114258796048" stepping="0.4277995225912072"/>
+    <vehicle id="vehicle_0_0i" type="car" depart="0">
+        <route edges="0i"/>
+    </vehicle>
+    <vehicle id="vehicle_0_1i" type="car" depart="0">
+        <route edges="1i"/>
+    </vehicle>
+    <vehicle id="vehicle_0_2i" type="car" depart="0">
+        <route edges="2i"/>
+    </vehicle>
+    <vehicle id="vehicle_0_3i" type="car" depart="0">
+        <route edges="3i"/>
+    </vehicle>
+</routes>

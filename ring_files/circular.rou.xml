@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
+    <vType id="car" accel="2.6" decel="4.5" sigma="0.5" length="5" minGap="2.5" maxSpeed="13.89" guiShape="passenger" carFollowModel="EIDM"/>
+    
+    <route id="route_0i" edges="0i 1i 2i 3i" repeat="100"/>
+    <route id="route_1i" edges="1i 2i 3i 0i" repeat="100"/>
+    <route id="route_2i" edges="2i 3i 0i 1i" repeat="100"/>
+    <route id="route_3i" edges="3i 0i 1i 2i" repeat="100"/>
+    
+    <vehicle id="car_0i_0" type="car" route="route_0i" depart="0" departPos="0.0" departSpeed="max"/>
+    <vehicle id="car_0i_1" type="car" route="route_0i" depart="0" departPos="101.01571428571428" departSpeed="max"/>
+    <vehicle id="car_0i_2" type="car" route="route_0i" depart="0" departPos="202.03142857142856" departSpeed="max"/>
+    <vehicle id="car_0i_3" type="car" route="route_0i" depart="0" departPos="303.04714285714283" departSpeed="max"/>
+    <vehicle id="car_0i_4" type="car" route="route_0i" depart="0" departPos="404.0628571428571" departSpeed="max"/>
+    <vehicle id="car_0i_5" type="car" route="route_0i" depart="0" departPos="505.0785714285714" departSpeed="max"/>
+    <vehicle id="car_0i_6" type="car" route="route_0i" depart="0" departPos="606.0942857142857" departSpeed="max"/>
+    <vehicle id="car_1i_0" type="car" route="route_1i" depart="0" departPos="0.0" departSpeed="max"/>
+    <vehicle id="car_1i_1" type="car" route="route_1i" depart="0" departPos="101.01571428571428" departSpeed="max"/>
+    <vehicle id="car_1i_2" type="car" route="route_1i" depart="0" departPos="202.03142857142856" departSpeed="max"/>
+    <vehicle id="car_1i_3" type="car" route="route_1i" depart="0" departPos="303.04714285714283" departSpeed="max"/>
+    <vehicle id="car_1i_4" type="car" route="route_1i" depart="0" departPos="404.0628571428571" departSpeed="max"/>
+    <vehicle id="car_1i_5" type="car" route="route_1i" depart="0" departPos="505.0785714285714" departSpeed="max"/>
+    <vehicle id="car_1i_6" type="car" route="route_1i" depart="0" departPos="606.0942857142857" departSpeed="max"/>
+    <vehicle id="car_2i_0" type="car" route="route_2i" depart="0" departPos="0.0" departSpeed="max"/>
+    <vehicle id="car_2i_1" type="car" route="route_2i" depart="0" departPos="101.01571428571428" departSpeed="max"/>
+    <vehicle id="car_2i_2" type="car" route="route_2i" depart="0" departPos="202.03142857142856" departSpeed="max"/>
+    <vehicle id="car_2i_3" type="car" route="route_2i" depart="0" departPos="303.04714285714283" departSpeed="max"/>
+    <vehicle id="car_2i_4" type="car" route="route_2i" depart="0" departPos="404.0628571428571" departSpeed="max"/>
+    <vehicle id="car_2i_5" type="car" route="route_2i" depart="0" departPos="505.0785714285714" departSpeed="max"/>
+    <vehicle id="car_2i_6" type="car" route="route_2i" depart="0" departPos="606.0942857142857" departSpeed="max"/>
+    <vehicle id="car_3i_0" type="car" route="route_3i" depart="0" departPos="0.0" departSpeed="max"/>
+    <vehicle id="car_3i_1" type="car" route="route_3i" depart="0" departPos="101.01571428571428" departSpeed="max"/>
+    <vehicle id="car_3i_2" type="car" route="route_3i" depart="0" departPos="202.03142857142856" departSpeed="max"/>
+    <vehicle id="car_3i_3" type="car" route="route_3i" depart="0" departPos="303.04714285714283" departSpeed="max"/>
+    <vehicle id="car_3i_4" type="car" route="route_3i" depart="0" departPos="404.0628571428571" departSpeed="max"/>
+    <vehicle id="car_3i_5" type="car" route="route_3i" depart="0" departPos="505.0785714285714" departSpeed="max"/>
+    <vehicle id="car_3i_6" type="car" route="route_3i" depart="0" departPos="606.0942857142857" departSpeed="max"/>
+</routes>

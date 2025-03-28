@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nodes>
+    <node id="0" x="500.00" y="0.00" type="priority"/>
+    <node id="1" x="492.40" y="86.82" type="priority"/>
+    <node id="2" x="469.85" y="171.01" type="priority"/>
+    <node id="3" x="433.01" y="250.00" type="priority"/>
+    <node id="4" x="383.02" y="321.39" type="priority"/>
+    <node id="5" x="321.39" y="383.02" type="priority"/>
+    <node id="6" x="250.00" y="433.01" type="priority"/>
+    <node id="7" x="171.01" y="469.85" type="priority"/>
+    <node id="8" x="86.82" y="492.40" type="priority"/>
+    <node id="9" x="0.00" y="500.00" type="priority"/>
+    <node id="10" x="-86.82" y="492.40" type="priority"/>
+    <node id="11" x="-171.01" y="469.85" type="priority"/>
+    <node id="12" x="-250.00" y="433.01" type="priority"/>
+    <node id="13" x="-321.39" y="383.02" type="priority"/>
+    <node id="14" x="-383.02" y="321.39" type="priority"/>
+    <node id="15" x="-433.01" y="250.00" type="priority"/>
+    <node id="16" x="-469.85" y="171.01" type="priority"/>
+    <node id="17" x="-492.40" y="86.82" type="priority"/>
+    <node id="18" x="-500.00" y="0.00" type="priority"/>
+    <node id="19" x="-492.40" y="-86.82" type="priority"/>
+    <node id="20" x="-469.85" y="-171.01" type="priority"/>
+    <node id="21" x="-433.01" y="-250.00" type="priority"/>
+    <node id="22" x="-383.02" y="-321.39" type="priority"/>
+    <node id="23" x="-321.39" y="-383.02" type="priority"/>
+    <node id="24" x="-250.00" y="-433.01" type="priority"/>
+    <node id="25" x="-171.01" y="-469.85" type="priority"/>
+    <node id="26" x="-86.82" y="-492.40" type="priority"/>
+    <node id="27" x="-0.00" y="-500.00" type="priority"/>
+    <node id="28" x="86.82" y="-492.40" type="priority"/>
+    <node id="29" x="171.01" y="-469.85" type="priority"/>
+    <node id="30" x="250.00" y="-433.01" type="priority"/>
+    <node id="31" x="321.39" y="-383.02" type="priority"/>
+    <node id="32" x="383.02" y="-321.39" type="priority"/>
+    <node id="33" x="433.01" y="-250.00" type="priority"/>
+    <node id="34" x="469.85" y="-171.01" type="priority"/>
+    <node id="35" x="492.40" y="-86.82" type="priority"/>
+</nodes>
