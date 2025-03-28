@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<net version="1.9" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/net_file.xsd">
+
+    <location netOffset="0.0,0.0" convBoundary="0.0,0.0,20000.0,0.0" origBoundary="0.0,0.0,20000.0,0.0" projParameter="!"/>
+
+    <edge id="edge_0" from="node_0" to="node_1" priority="-1">
+        <lane id="edge_0_0" index="0" speed="36.00" length="15000.0" shape="0.0,0.0 15000.0,0.0"/>
+    </edge>
+
+    <junction id="node_0" type="dead_end" x="0.0" y="0.0" incLanes="" intLanes="" shape="0.0,0.0"/>
+    <junction id="node_1" type="dead_end" x="15000.0" y="0.0" incLanes="edge_0_0" intLanes="" shape="15000.0,0.0"/>
+
+</net> 
