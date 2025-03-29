@@ -59,14 +59,19 @@ def generate_circle_rou(N, eidm_params):
     delta = np.random.normal(eidm_params['delta_mean'], eidm_params['delta_std'])
     stepping = np.random.normal(eidm_params['stepping_mean'], eidm_params['stepping_std'])
     
+    # Генерируем параметры транспортного средства
+    length = np.random.normal(eidm_params['length_mean'], eidm_params['length_std'])
+    min_gap = np.random.normal(eidm_params['min_gap_mean'], eidm_params['min_gap_std'])
+    max_speed = np.random.normal(eidm_params['max_speed_mean'], eidm_params['max_speed_std'])
+    
     with open(output_file, 'w') as f:
         # Записываем заголовок
         f.write('<?xml version="1.0" encoding="UTF-8"?>\n')
         f.write('<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">\n')
         
         # Определяем тип транспортного средства
-        f.write('    <vType id="car" accel="{:.2f}" decel="{:.2f}" sigma="{:.2f}" length="5" minGap="2.5" maxSpeed="13.89" guiShape="passenger" carFollowModel="EIDM" tau="{:.2f}" delta="{:.2f}" stepping="{:.2f}"/>\n'.format(
-            accel, decel, sigma, tau, delta, stepping))
+        f.write('    <vType id="car" accel="{:.2f}" decel="{:.2f}" sigma="{:.2f}" length="{:.2f}" minGap="{:.2f}" maxSpeed="{:.2f}" guiShape="passenger" carFollowModel="EIDM" tau="{:.2f}" delta="{:.2f}" stepping="{:.2f}"/>\n'.format(
+            accel, decel, sigma, length, min_gap, max_speed, tau, delta, stepping))
         
         # Создаем маршруты, начинающиеся с каждого ребра
         for i, start_edge in enumerate(sorted_edges):
@@ -106,7 +111,13 @@ if __name__ == "__main__":
         'delta_mean': 0.5,
         'delta_std': 0.1,
         'stepping_mean': 0.5,
-        'stepping_std': 0.1
+        'stepping_std': 0.1,
+        'length_mean': 5.0,
+        'length_std': 0.5,
+        'min_gap_mean': 2.5,
+        'min_gap_std': 0.5,
+        'max_speed_mean': 13.89,
+        'max_speed_std': 1.0
     }
     output_file = generate_circle_rou(N, eidm_params)
     print(f"Сгенерирован файл маршрутов: {output_file}")

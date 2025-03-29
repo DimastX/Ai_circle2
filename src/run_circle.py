@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 from generate_circle_rou_new import generate_circle_rou
+from analyze_data import analyze_data
 
 def run_simulation(N, eidm_params):
     # Создаем папку для результатов
@@ -34,7 +35,7 @@ def run_simulation(N, eidm_params):
         
         # Основной цикл симуляции
         step = 0
-        max_steps = 1000  # 100 секунд при step_length = 0.1
+        max_steps = 20000  # 100 секунд при step_length = 0.1
         
         while step < max_steps:
             traci.simulationStep()
@@ -55,10 +56,10 @@ def run_simulation(N, eidm_params):
                     speeds.append(speed)
                     vehicle_ids_history.append(vehicle_id)
                     
-                    # На 10-й секунде снижаем скорость первого автомобиля
+                    # На 100-й секунде снижаем скорость первого автомобиля
                     if current_time == 10.0 and vehicle_id == vehicle_ids[0]:
                         traci.vehicle.setSpeed(vehicle_id, 2.0)
-                    # Возвращаем нормальную скорость через 1 секунду
+                    # Возвращаем нормальную скорость через 10 секунду
                     elif current_time == 11.0 and vehicle_id == vehicle_ids[0]:
                         traci.vehicle.setSpeed(vehicle_id, -1)  # -1 означает максимальную скорость
                         
@@ -66,7 +67,6 @@ def run_simulation(N, eidm_params):
                     print(f"Ошибка при получении данных для ТС {vehicle_id}: {e}")
             
             step += 1
-            time.sleep(0.1)  # Задержка для стабильности
 
     except Exception as e:
         print(f"Произошла ошибка: {e}")
@@ -96,19 +96,27 @@ if __name__ == "__main__":
     # Параметры EIDM
     eidm_params = {
         'accel_mean': 2.6,
-        'accel_std': 0.5,
+        'accel_std': 0,
         'decel_mean': 4.5,
-        'decel_std': 0.5,
+        'decel_std': 0,
         'sigma_mean': 0.5,
-        'sigma_std': 0.1,
+        'sigma_std': 0,
         'tau_mean': 0.5,
-        'tau_std': 0.1,
+        'tau_std': 0,
         'delta_mean': 0.5,
-        'delta_std': 0.1,
+        'delta_std': 0,
         'stepping_mean': 0.5,
-        'stepping_std': 0.1
+        'stepping_std': 0,
+        'length_mean': 5.0,
+        'length_std': 0.5,
+        'min_gap_mean': 2.5,
+        'min_gap_std': 0.5,
+        'max_speed_mean': 22,
+        'max_speed_std': 3.0
     }
     
-    N = 7  # Количество машин на каждом edge
+    N = 5  # Количество машин на каждом edge
     results_dir = run_simulation(N, eidm_params)
     print(f"Результаты сохранены в директории: {results_dir}") 
+    # Анализируем полученные данные
+    analyze_data(os.path.join(results_dir, 'simulation_data.csv'))
