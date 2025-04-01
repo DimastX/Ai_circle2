@@ -103,40 +103,6 @@ def analyze_data(file_path):
     plt.savefig(os.path.join(analysis_dir, 'distance_time.png'))
     plt.close()
     
-    # 3. Анализ по каждому транспортному средству
-    plt.figure(figsize=(12, 6))
-    for vehicle in vehicles:
-        vehicle_data = df[df['vehicle_id'] == vehicle]
-        plt.plot(vehicle_data['time'], vehicle_data['speed'], label=f'ТС {vehicle}')
-    plt.title('Скорости транспортных средств')
-    plt.xlabel('Время (с)')
-    plt.ylabel('Скорость (м/с)')
-    plt.legend()
-    plt.grid(True)
-    plt.savefig(os.path.join(analysis_dir, 'vehicles_speed.png'))
-    plt.close()
-    
-    # Траектории транспортных средств
-    plt.figure(figsize=(12, 12))
-    for vehicle in vehicles:
-        vehicle_data = df[df['vehicle_id'] == vehicle]
-        plt.plot(vehicle_data['x'], vehicle_data['y'], label=f'ТС {vehicle}')
-    plt.title('Траектории транспортных средств')
-    plt.xlabel('Положение X (м)')
-    plt.ylabel('Положение Y (м)')
-    plt.legend()
-    plt.grid(True)
-    plt.axis('equal')  # Делаем масштаб по осям одинаковым
-    plt.savefig(os.path.join(analysis_dir, 'vehicles_trajectories.png'))
-    plt.close()
-    
-    # 4. Корреляционная матрица
-    plt.figure(figsize=(10, 8))
-    correlation_matrix = df[['speed', 'x', 'y']].corr()
-    sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', center=0)
-    plt.title('Корреляционная матрица')
-    plt.savefig(os.path.join(analysis_dir, 'correlation_matrix.png'))
-    plt.close()
     
     # 5. Статистический анализ
     # Общая статистика

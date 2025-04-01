@@ -90,7 +90,7 @@ def generate_circle_rou(N, eidm_params):
             # Добавляем транспортные средства для этого маршрута
             for j in range(N):
                 vehicle_id = f"car_{i}_{j}"
-                depart_pos = j * 87.15 / N # Равномерное распределение по длине ребра (87.15 метров)
+                depart_pos = j * (87.15 - 1) / N # Равномерное распределение по длине ребра (87.15 метров)
                 f.write(f'    <vehicle id="{vehicle_id}" type="car" route="route_{i}" depart="0" departPos="{depart_pos}" departSpeed="max"/>\n')
         
         f.write('</routes>')
