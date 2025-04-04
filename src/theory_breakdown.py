@@ -53,7 +53,8 @@ def solve_equilibrium(v0, delta, a, b, T, s0, L_ring, L_car, N):
     check_val = (v_e/ v0)**delta + ((s0+ T*v_e)/ s_e)**2
     if abs(check_val - 1.0) > 0.05:
         return None, None
-
+    N = L_ring / (L_car + T * v_e)
+    print(f"T: {T}, v_e: {v_e}, s_e: {s_e}, N: {N}")
     return v_e, s_e
 
 
@@ -134,13 +135,13 @@ def main(param_to_vary='N', param_range=None):
         'L_car': 5.0,
         'a': 2.6,
         'b': 4.5,
-        'v0': 20.0,
-        'delta': 0.5,
+        'v0': 20,
+        'delta': 4,
         's0': 2.0,
         'T': 2,
-        'N': 144  # базовое значение N
+        'N': 100  # базовое значение N
     }
-    
+    #base_params['N'] = int(base_params['L_ring'] / (base_params['L_car'] + base_params['T'] * base_params['v0']))
     # Если диапазон не указан, используем значения по умолчанию
     if param_range is None:
         if param_to_vary == 'N':
@@ -214,5 +215,5 @@ def main(param_to_vary='N', param_range=None):
 if __name__ == '__main__':
     # Пример использования:
     # main('N')  # варьирование N
-    main('T', np.linspace(0.7, 2, 50))  # варьирование T с заданным диапазоном
+    main('T', np.linspace(0.7, 2, 14))  # варьирование T с заданным диапазоном
     # main('s0', np.linspace(2.0, 4.0, 200))  # варьирование s0 от 2.0 до 4.0

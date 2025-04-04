@@ -86,19 +86,27 @@ def generate_circle_rou(N, eidm_params):
             
             # Добавляем маршрут
             f.write(f'    <route id="route_{i}" edges="{route_edges_str}" repeat="100"/>\n')
+        
+        # Распределяем машины по ребрам
+        cars_per_edge = N // len(sorted_edges)
+        remaining_cars = N % len(sorted_edges)
+        
+        for i, start_edge in enumerate(sorted_edges):
+            # Определяем количество машин для текущего ребра
+            current_edge_cars = cars_per_edge + (1 if i < remaining_cars else 0)
             
             # Добавляем транспортные средства для этого маршрута
-            for j in range(N):
+            for j in range(current_edge_cars):
                 vehicle_id = f"car_{i}_{j}"
-                depart_pos = j * (87.15 - 1) / N # Равномерное распределение по длине ребра (87.15 метров)
-                f.write(f'    <vehicle id="{vehicle_id}" type="car" route="route_{i}" depart="0" departPos="{depart_pos}" departSpeed="max"/>\n')
+                depart_pos = j * 87.15 / current_edge_cars  # Равномерное распределение по длине ребра
+                f.write(f'    <vehicle id="{vehicle_id}" type="car" route="route_{i}" depart="0" departPos="{depart_pos}" insertionChecks="none" departSpeed="10" departLane="best"/>\n')
         
         f.write('</routes>')
     
     return output_file
 
 if __name__ == "__main__":
-    N = 7  # Количество машин на каждом маршруте
+    N = 50  # Общее количество машин
     eidm_params = {
         'accel_mean': 2.6,
         'accel_std': 0.5,

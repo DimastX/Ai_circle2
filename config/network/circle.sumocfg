@@ -7,7 +7,7 @@
     <time>
         <begin value="0"/>
         <end value="100"/>
-        <step-length value="0.1"/>
+        <step-length value="0.5"/>
     </time>
     <processing>
         <lanechange.duration value="0"/>
@@ -17,6 +17,7 @@
         <ignore-junction-blocker value="5"/>
         <collision.mingap-factor value="0.5"/>
         <collision.check-junctions value="false"/>
+        <ignore-route-errors value="true"/>
     </processing>
     <report>
         <verbose value="true"/>

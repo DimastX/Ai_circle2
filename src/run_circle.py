@@ -8,6 +8,8 @@ from datetime import datetime
 from generate_circle_rou_new import generate_circle_rou
 from analyze_data import analyze_data
 
+L = 3140
+
 def run_simulation(N, eidm_params):
     # Создаем папку для результатов
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -20,7 +22,7 @@ def run_simulation(N, eidm_params):
     # Настройки запуска SUMO
     sumoBinary = "sumo-gui"
     sumoConfig = os.path.join("..", "config", "network", "circle.sumocfg")
-    step_length = 0.25
+    step_length = 0.5
     sumoCmd = [sumoBinary, "-c", sumoConfig, "--step-length", str(step_length)]
 
     # Подготовка массивов для хранения данных
@@ -58,7 +60,7 @@ def run_simulation(N, eidm_params):
                     
                     # На 100-й секунде снижаем скорость первого автомобиля
                     if current_time == 10.0 and vehicle_id == vehicle_ids[0]:
-                        traci.vehicle.setSpeed(vehicle_id, 0.0)
+                        traci.vehicle.setSpeed(vehicle_id, 8.0)
                     # Возвращаем нормальную скорость через 10 секунду
                     elif current_time == 13.0 and vehicle_id == vehicle_ids[0]:
                         traci.vehicle.setSpeed(vehicle_id, -1)  # -1 означает максимальную скорость
@@ -101,21 +103,22 @@ if __name__ == "__main__":
         'decel_std': 0,
         'sigma_mean': 0.5,
         'sigma_std': 0,
-        'tau_mean': 1.7,
+        'tau_mean': 3,
         'tau_std': 0,
-        'delta_mean': 0.5,
+        'delta_mean': 4,
         'delta_std': 0,
         'stepping_mean': 0.5,
         'stepping_std': 0,
         'length_mean': 5.0,
         'length_std': 0,
-        'min_gap_mean': 2,
+        'min_gap_mean': 3,
         'min_gap_std': 0,
         'max_speed_mean': 20,
-        'max_speed_std': 3.0
+        'max_speed_std': 0.0
     }
+    N = 100
     
-    N = 4  # Количество машин на каждом edge
+    #N = int(L / (eidm_params['length_mean'] + eidm_params['min_gap_mean'] + eidm_params['tau_mean'] * eidm_params['max_speed_mean'])) # Количество машин на каждом edge
     results_dir = run_simulation(N, eidm_params)
     print(f"Результаты сохранены в директории: {results_dir}") 
     # Анализируем полученные данные
