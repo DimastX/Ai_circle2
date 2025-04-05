@@ -103,7 +103,7 @@ if __name__ == "__main__":
         'decel_std': 0,
         'sigma_mean': 0.5,
         'sigma_std': 0,
-        'tau_mean': 3,
+        'tau_mean': 2,
         'tau_std': 0,
         'delta_mean': 4,
         'delta_std': 0,
@@ -116,7 +116,7 @@ if __name__ == "__main__":
         'max_speed_mean': 20,
         'max_speed_std': 0.0
     }
-    N = 100
+    N = 75
     
     #N = int(L / (eidm_params['length_mean'] + eidm_params['min_gap_mean'] + eidm_params['tau_mean'] * eidm_params['max_speed_mean'])) # Количество машин на каждом edge
     results_dir = run_simulation(N, eidm_params)
