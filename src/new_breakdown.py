@@ -14,7 +14,7 @@ base_params = {
     'v0': 20.0,         # желаемая скорость (м/с)
     'delta': 4,       # показатель степени
     's0': 2.0,          # минимальный зазор
-    'N': 75            # число машин
+    'N': 125           # число машин
 }
 
 def ring_mean_s(params):
@@ -145,7 +145,7 @@ if __name__=='__main__':
     plt.figure(figsize=(8,5))
     ax1= plt.gca()
     color1='tab:red'
-    ax1.set_xlabel('Headway T')
+    ax1.set_xlabel('Headway T, с')
     ax1.set_ylabel('lambda (delay eq)', color=color1)
     ax1.plot(x_vals, lam_vals, 'o', color=color1, label='lambda')
     ax1.tick_params(axis='y', labelcolor=color1)
@@ -153,12 +153,12 @@ if __name__=='__main__':
 
     ax2= ax1.twinx()
     color2='tab:blue'
-    ax2.set_ylabel('Stability (1= stable, 0= unstable)', color=color2)
+    ax2.set_ylabel('Устойчивость (1 - устойчиво, 0 - неустойчиво)', color=color2)
     ax2.plot(x_vals, st_ind, '-', color=color2, label='stable?')
     ax2.tick_params(axis='y', labelcolor=color2)
     ax2.set_ylim(-0.1,1.1)
 
-    plt.title(f'Stability vs T, reaction_delay= {reaction_delay}s')
+    plt.title(f'Зависимость lambda от T, tau_r= {reaction_delay}s')
     plt.show()
 
     for row in data:

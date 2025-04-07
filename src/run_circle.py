@@ -21,6 +21,8 @@ def run_simulation(N, eidm_params):
     
     # Настройки запуска SUMO
     sumoBinary = "sumo-gui"
+    sumoBinary = "C:\\Program Files (x86)\\Eclipse\\sumo-1.22.0\\bin\\sumo.exe"
+
     sumoConfig = os.path.join("..", "config", "network", "circle.sumocfg")
     step_length = 0.5
     sumoCmd = [sumoBinary, "-c", sumoConfig, "--step-length", str(step_length)]
@@ -37,7 +39,7 @@ def run_simulation(N, eidm_params):
         
         # Основной цикл симуляции
         step = 0
-        max_steps = 5000  # 100 секунд при step_length = 0.1
+        max_steps = 10000  # 100 секунд при step_length = 0.1
         
         while step < max_steps:
             traci.simulationStep()
@@ -60,7 +62,7 @@ def run_simulation(N, eidm_params):
                     
                     # На 100-й секунде снижаем скорость первого автомобиля
                     if current_time == 10.0 and vehicle_id == vehicle_ids[0]:
-                        traci.vehicle.setSpeed(vehicle_id, 8.0)
+                        traci.vehicle.setSpeed(vehicle_id, 8)
                     # Возвращаем нормальную скорость через 10 секунду
                     elif current_time == 13.0 and vehicle_id == vehicle_ids[0]:
                         traci.vehicle.setSpeed(vehicle_id, -1)  # -1 означает максимальную скорость
@@ -103,7 +105,7 @@ if __name__ == "__main__":
         'decel_std': 0,
         'sigma_mean': 0.5,
         'sigma_std': 0,
-        'tau_mean': 2,
+        'tau_mean': 1,
         'tau_std': 0,
         'delta_mean': 4,
         'delta_std': 0,
@@ -116,7 +118,7 @@ if __name__ == "__main__":
         'max_speed_mean': 20,
         'max_speed_std': 0.0
     }
-    N = 75
+    N = 125
     
     #N = int(L / (eidm_params['length_mean'] + eidm_params['min_gap_mean'] + eidm_params['tau_mean'] * eidm_params['max_speed_mean'])) # Количество машин на каждом edge
     results_dir = run_simulation(N, eidm_params)
