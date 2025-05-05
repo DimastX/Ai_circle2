@@ -7,86 +7,84 @@ from scipy.special import lambertw
 
 
 base_params = {
-    'L_ring': 3137.4,   # длина кольца (м)
     'L_car': 5.0,       # длина авто
     'a': 2.6,           # комфортное ускорение
     'b': 4.5,           # комфортное торможение
     'v0': 20.0,         # желаемая скорость (м/с)
-    'delta': 4,       # показатель степени
+    'delta': 4,         # показатель степени
     's0': 2.0,          # минимальный зазор
-    'N': 125           # число машин
+    'rho': 0.04         # плотность (1/м)
 }
 
 def ring_mean_s(params):
     """
-    s_mean= (L_ring - N*L_car)/ N, если это >0, иначе 0
+    s_mean = 1/rho - L_car
     """
-    L_ring= params['L_ring']
-    L_car= params['L_car']
-    N= params['N']
-    free_space= L_ring - N* L_car
-    if free_space< 0:
-        free_space= 0.0
-    return free_space/ N
+    L_car = params['L_car']
+    rho = params['rho']
+    free_space = 1.0/rho - L_car
+    if free_space < 0:
+        free_space = 1e-10  # маленькое положительное число вместо нуля
+    return free_space
 
 def eq_for_ve(ve, T, params):
     """
     0= a[1 - (ve/v0)^delta - ((s0 + T ve)/ s_mean)^2].
     """
-    a= params['a']
-    v0= params['v0']
-    delta= params['delta']
-    s0= params['s0']
-    s_mean= ring_mean_s(params)
+    a = params['a']
+    v0 = params['v0']
+    delta = params['delta']
+    s0 = params['s0']
+    s_mean = ring_mean_s(params)
 
-    lhs= 1.0 - (ve/ v0)**delta - ((s0+ T* ve)/ s_mean)**2
-    return a* lhs  # хотим=0
+    lhs = 1.0 - (ve/v0)**delta - ((s0 + T*ve)/s_mean)**2
+    return a*lhs  # хотим=0
 
 def find_equilibrium_velocity(params, T_val):
     """
     Ищем ve>0, решая eq_for_ve(ve,T_val)=0 методом bisect.
     """
-    left= 0.0
-    right= params['v0']* 3.0
+    left = 0.0
+    right = params['v0']*3.0
     for _ in range(100):
-        mid= 0.5*(left+ right)
-        f_left= eq_for_ve(left, T_val, params)
-        f_mid= eq_for_ve(mid, T_val, params)
+        mid = 0.5*(left + right)
+        f_left = eq_for_ve(left, T_val, params)
+        f_mid = eq_for_ve(mid, T_val, params)
 
-        if abs(f_mid)< 1e-7:
+        if abs(f_mid) < 1e-7:
             return mid
-        if f_left* f_mid<= 0.0:
-            right= mid
+        if f_left*f_mid <= 0.0:
+            right = mid
         else:
-            left= mid
-    return 0.5*(left+ right)
+            left = mid
+    return 0.5*(left + right)
 
 def compute_A_and_2B(ve, T_val, params):
     """
     Считаем A и 2B (т.к. max real= A+2B при k= pi).
     """
-    a= params['a']
-    b= params['b']
-    v0= params['v0']
-    delta= params['delta']
-    s0= params['s0']
-    s_mean= ring_mean_s(params)
+    a = params['a']
+    b = params['b']
+    v0 = params['v0']
+    delta = params['delta']
+    s0 = params['s0']
+    s_mean = ring_mean_s(params)
 
     # s^*(ve,0)= s0+ T_val* ve
-    s_star_e= s0+ T_val* ve
+    s_star_e = s0 + T_val*ve
 
     # s_e= s_mean (предполагаем)
-    s_e= s_mean
+    s_e = s_mean
 
     # A:
-    part1= - a* delta*(ve/ v0)**(delta-1)/ v0
-    part2= - 2*a*( s_star_e/(s_e**2 ))* T_val
-    A= part1+ part2
+    part1 = -a*delta*(ve/v0)**(delta-1)/v0
+    part2 = -2*a*(s_star_e/(s_e**2))*T_val
+    A = part1 + part2
 
     # B =>(A+2B) => first find B
-    partB= - 2*a*( s_star_e/( s_e**2))*( -ve/(2.0* np.sqrt(a*b)) )
-    B= partB
-    return A, 2.0* B
+    partB = -2*a*(s_star_e/(s_e**2))*(-ve/(2.0*np.sqrt(a*b)))
+    B = partB
+    return A, 2.0*B
 
 def f_lambda(lam, alpha, tau_r):
     return -lam + alpha * np.exp(-lam * tau_r)

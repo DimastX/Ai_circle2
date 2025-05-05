@@ -99,7 +99,7 @@ def generate_circle_rou(N, eidm_params):
             for j in range(current_edge_cars):
                 vehicle_id = f"car_{i}_{j}"
                 depart_pos = j * 87.15 / current_edge_cars  # Равномерное распределение по длине ребра
-                f.write(f'    <vehicle id="{vehicle_id}" type="car" route="route_{i}" depart="0" departPos="{depart_pos}" insertionChecks="none" departSpeed="10" departLane="best"/>\n')
+                f.write(f'    <vehicle id="{vehicle_id}" type="car" route="route_{i}" depart="0" departPos="{depart_pos}" insertionChecks="none" departSpeed="max" departLane="best"/>\n')
         
         f.write('</routes>')
     
