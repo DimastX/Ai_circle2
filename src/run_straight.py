@@ -8,19 +8,18 @@ from datetime import datetime
 from generate_straight_rou import generate_straight_rou
 from analyze_straight_data import analyze_straight_data
 
-def run_simulation(N, eidm_params, q_fixed):
+def run_simulation(N, eidm_params, q_fixed, step_length=0.5, v_e=None):
     # Создаем папку для результатов
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_dir = os.path.join("data", "simulations", f"straight_results_N{N}_q{q_fixed}_accel{eidm_params['accel_mean']}_decel{eidm_params['decel_mean']}_{timestamp}")
     os.makedirs(results_dir, exist_ok=True)
     
-    # Генерируем файл маршрутов
-    generate_straight_rou(N, eidm_params, q_fixed)
+    # Генерация rou.xml теперь только вне этой функции!
+    # generate_straight_rou(N, eidm_params, q_fixed)
     
     # Настройки запуска SUMO
-    sumoBinary = "C:\\Program Files (x86)\\Eclipse\\sumo-1.22.0\\bin\\sumo-gui.exe"
+    sumoBinary = "C:\\Program Files (x86)\\Eclipse\\sumo-1.22.0\\bin\\sumo.exe"
     sumoConfig = os.path.join("config", "network", "straight.sumocfg")
-    step_length = 0.5  # Уменьшаем шаг для более точного контроля
     sumoCmd = [sumoBinary, "-c", sumoConfig, "--step-length", str(step_length)]
 
     # Подготовка массивов для хранения данных
@@ -54,27 +53,38 @@ def run_simulation(N, eidm_params, q_fixed):
         braking_time = None  # Время начала торможения
         
         simulation_active = True
+
         while step < max_steps and simulation_active:
+            # --- Устанавливаем скорость car_0 равной v_e ---
+            if v_e is not None:
+                try:
+                    traci.vehicle.setSpeed("car_99", v_e)
+                except Exception as e:
+                    print(f"Ошибка при установке скорости car_99: {e}")
+                    break
             traci.simulationStep()
             current_time = step * step_length
             vehicle_ids = traci.vehicle.getIDList()
+            
             # Если машин меньше двух — завершаем симуляцию (но данные за этот шаг ещё сохраняем)
             if len(vehicle_ids) < 2:
                 print(f"На дороге осталось {len(vehicle_ids)} машин(ы) на шаге {step}, время {current_time} сек. Останавливаем симуляцию.")
                 break
+            # for vid in traci.vehicle.getIDList():
+            #     print(vid, traci.vehicle.getSpeed(vid), traci.vehicle.getDistance(vid))
             
             # Получаем список всех транспортных средств
             vehicle_ids = traci.vehicle.getIDList()
             
             # Проверяем время для торможения 99-й машины
             if "car_99" in vehicle_ids and not ninety_ninth_car_slowed and current_time >= 20.0:
-                traci.vehicle.setSpeed("car_99", -1)  # Устанавливаем скорость 8 м/с
+                # traci.vehicle.setSpeed("car_99", -1)  # Устанавливаем скорость 8 м/с
                 ninety_ninth_car_slowed = True
                 braking_time = current_time  # Сохраняем время начала торможения
                 print(f"Машина car_99 начала торможение в момент времени {braking_time} секунд")
             # Возвращаем нормальную скорость через 10 секунд
             elif ninety_ninth_car_slowed and not ninety_ninth_car_restored and current_time >= braking_time + 10.0:
-                traci.vehicle.setSpeed("car_99", -1)  # -1 означает максимальную скорость
+                # traci.vehicle.setSpeed("car_99", v_e)  # -1 означает максимальную скорость
                 ninety_ninth_car_restored = True
                 print(f"Машина car_99 восстановила скорость в момент времени {current_time} секунд")
             # Вычисляем плотность и поток для каждого ребра
@@ -222,9 +232,10 @@ if __name__ == "__main__":
     
     N = 100  # Количество машин
     q_fixed = 0.769  # Поток (vehicles/m/s)
+    step_length = 0.5
     
     # Запускаем симуляцию
-    results_dir = run_simulation(N, eidm_params, q_fixed)
+    results_dir = run_simulation(N, eidm_params, q_fixed, step_length=step_length)
     print(f"Результаты сохранены в директории: {results_dir}")
     # Анализируем полученные данные
     analyze_straight_data(os.path.join(results_dir, 'simulation_data.csv')) 

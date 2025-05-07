@@ -63,6 +63,7 @@ def analyze_straight_data(data_file):
         
         df.loc[mask, 'distance'] = cumulative_distance + initial_offset
     
+    
     # График V(t) для всех автомобилей
     plt.figure(figsize=(12, 6))
     
@@ -76,9 +77,9 @@ def analyze_straight_data(data_file):
     plt.plot(vehicle_data['time'], vehicle_data['speed'], 'r-', linewidth=2)
     
     # Отмечаем момент торможения
-    if braking_time is not None:
-        plt.axvline(x=braking_time, color='k', linestyle='--', alpha=0.5)
-        plt.text(braking_time, plt.ylim()[1], 'Торможение', rotation=90, verticalalignment='top')
+    # if braking_time is not None:
+    #     plt.axvline(x=braking_time, color='k', linestyle='--', alpha=0.5)
+    #     plt.text(braking_time, plt.ylim()[1], 'Торможение', rotation=90, verticalalignment='top')
     
     plt.title('Скорость от времени V(t)')
     plt.xlabel('Время (с)')
@@ -100,9 +101,9 @@ def analyze_straight_data(data_file):
     plt.plot(vehicle_data['time'], vehicle_data['distance'], 'r-', linewidth=2)
     
     # Отмечаем момент торможения
-    if braking_time is not None:
-        plt.axvline(x=braking_time, color='k', linestyle='--', alpha=0.5)
-        plt.text(braking_time, plt.ylim()[1], 'Торможение', rotation=90, verticalalignment='top')
+    # if braking_time is not None:
+    #     plt.axvline(x=braking_time, color='k', linestyle='--', alpha=0.5)
+    #     plt.text(braking_time, plt.ylim()[1], 'Торможение', rotation=90, verticalalignment='top')
     
     plt.title('Пройденное расстояние от времени S(t)')
     plt.xlabel('Время (с)')
@@ -123,9 +124,9 @@ def analyze_straight_data(data_file):
             plt.plot(vehicle_data['time'], vehicle_data['speed'], f'{color}-', linewidth=2, label=f'Машина {vehicle}')
     
     # Отмечаем момент торможения
-    if braking_time is not None:
-        plt.axvline(x=braking_time, color='k', linestyle='--', alpha=0.5)
-        plt.text(braking_time, plt.ylim()[1], 'Торможение', rotation=90, verticalalignment='top')
+    # if braking_time is not None:
+    #     plt.axvline(x=braking_time, color='k', linestyle='--', alpha=0.5)
+    #     plt.text(braking_time, plt.ylim()[1], 'Торможение', rotation=90, verticalalignment='top')
     
     plt.title('Скорость от времени V(t) для каждой десятой машины')
     plt.xlabel('Время (с)')
@@ -146,9 +147,9 @@ def analyze_straight_data(data_file):
             plt.plot(vehicle_data['time'], vehicle_data['distance'], f'{color}-', linewidth=2, label=f'Машина {vehicle}')
     
     # Отмечаем момент торможения
-    if braking_time is not None:
-        plt.axvline(x=braking_time, color='k', linestyle='--', alpha=0.5)
-        plt.text(braking_time, plt.ylim()[1], 'Торможение', rotation=90, verticalalignment='top')
+    # if braking_time is not None:
+    #     plt.axvline(x=braking_time, color='k', linestyle='--', alpha=0.5)
+    #     plt.text(braking_time, plt.ylim()[1], 'Торможение', rotation=90, verticalalignment='top')
     
     plt.title('Пройденное расстояние от времени S(t) для каждой десятой машины')
     plt.xlabel('Время (с)')
@@ -171,10 +172,10 @@ def analyze_straight_data(data_file):
     plt.plot(vehicle_data['distance'], vehicle_data['speed'], 'r-', linewidth=2)
     
     # Отмечаем момент торможения
-    if braking_time is not None:
-        braking_distance = df[(df['vehicle_id'] == 'car_9') & (df['time'] == braking_time)]['distance'].iloc[0]
-        plt.axvline(x=braking_distance, color='k', linestyle='--', alpha=0.5)
-        plt.text(braking_distance, plt.ylim()[1], 'Торможение', rotation=90, verticalalignment='top')
+    # if braking_time is not None:
+    #     braking_distance = df[(df['vehicle_id'] == 'car_9') & (df['time'] == braking_time)]['distance'].iloc[0]
+    #     plt.axvline(x=braking_distance, color='k', linestyle='--', alpha=0.5)
+    #     plt.text(braking_distance, plt.ylim()[1], 'Торможение', rotation=90, verticalalignment='top')
     
     plt.title('Скорость от положения V(x)')
     plt.xlabel('Положение на трассе (м)')
@@ -194,10 +195,10 @@ def analyze_straight_data(data_file):
             plt.plot(vehicle_data['distance'], vehicle_data['speed'], f'{color}-', linewidth=2, label=f'Машина {vehicle}')
     
     # Отмечаем момент торможения
-    if braking_time is not None:
-        braking_distance = df[(df['vehicle_id'] == 'car_9') & (df['time'] == braking_time)]['distance'].iloc[0]
-        plt.axvline(x=braking_distance, color='k', linestyle='--', alpha=0.5)
-        plt.text(braking_distance, plt.ylim()[1], 'Торможение', rotation=90, verticalalignment='top')
+    # if braking_time is not None:
+    #     braking_distance = df[(df['vehicle_id'] == 'car_9') & (df['time'] == braking_time)]['distance'].iloc[0]
+    #     plt.axvline(x=braking_distance, color='k', linestyle='--', alpha=0.5)
+    #     plt.text(braking_distance, plt.ylim()[1], 'Торможение', rotation=90, verticalalignment='top')
     
     plt.title('Скорость от положения V(x) для каждой десятой машины')
     plt.xlabel('Положение на трассе (м)')

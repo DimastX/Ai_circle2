@@ -16,12 +16,14 @@ def get_edges_from_net(net_file):
     
     return edges
 
-def generate_straight_rou(N, eidm_params, q_fixed):
+def generate_straight_rou(N, eidm_params, q_fixed, start_speed=None, equilibrium_spacing=None):
     """
     Генерирует файл маршрутов для прямой дороги.
     N - число машин
     eidm_params - параметры EIDM
     q_fixed - поток (vehicles/m/s)
+    start_speed - равновесная стартовая скорость (если None, используется max_speed)
+    equilibrium_spacing - равновесный интервал между машинами (если None, вычисляется по старой формуле)
     """
     # Создаем директорию для маршрутов, если её нет
     routes_dir = os.path.join("config", "routes")
@@ -48,29 +50,30 @@ def generate_straight_rou(N, eidm_params, q_fixed):
     min_gap = np.random.normal(eidm_params['min_gap_mean'], eidm_params['min_gap_std'])
     max_speed = np.random.normal(eidm_params['max_speed_mean'], eidm_params['max_speed_std'])
     
-    # Вычисляем плотность из потока и скорости: rho = q / v
-    v = max_speed if max_speed > 0 else 1.0  # чтобы не делить на 0
+    # Если не задано явно, используем max_speed для расчёта плотности и интервала
+    v = start_speed if start_speed is not None else (max_speed if max_speed > 0 else 1.0)
     rho = q_fixed / v
-    distance_between_cars = v / q_fixed  # = 1/rho
-    
+    distance_between_cars = equilibrium_spacing if equilibrium_spacing is not None else (v / q_fixed) 
+    distance_between_cars = distance_between_cars + eidm_params['length_mean']    
     with open(output_file, 'w') as f:
         # Записываем заголовок
         f.write('<?xml version="1.0" encoding="UTF-8"?>\n')
         f.write('<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">\n')
         
         # Определяем тип транспортного средства
-        f.write('    <vType id="car" accel="{:.2f}" decel="{:.2f}" sigma="{:.2f}" length="{:.2f}" minGap="{:.2f}" maxSpeed="{:.2f}" speedFactor="1.0" speedDev="0.0" guiShape="passenger" carFollowModel="EIDM" tau="{:.2f}" delta="{:.2f}" stepping="{:.2f}"/>\n'.format(
-            accel, decel, sigma, length, min_gap, max_speed, tau, delta, stepping))
+        f.write('    <vType id="car" accel="{:.2f}" decel="{:.2f}" sigma="{:.2f}" length="{:.2f}" minGap="{:.2f}" maxSpeed="{:.2f}" speedFactor="1.0" speedDev="0.0" guiShape="passenger" carFollowModel="EIDM" tau="{:.2f}" delta="{:.2f}"/>\n'.format(
+            accel, decel, sigma, length, min_gap, max_speed, tau, delta))
         
         # Создаем маршрут через все ребра
         route_edges_str = ' '.join(edges)
         f.write(f'    <route id="route_0" edges="{route_edges_str}"/>\n')
         
-        # Добавляем транспортные средства с заданным потоком
+        # Добавляем транспортные средства с равновесным интервалом и скоростью
         for i in range(N):
             vehicle_id = f"car_{i}"
-            depart_pos = i * distance_between_cars  # Начальная позиция с учетом потока
-            f.write(f'    <vehicle id="{vehicle_id}" type="car" route="route_0" depart="0" departPos="{depart_pos}" insertionChecks="none" departSpeed="max" departLane="best"/>\n')
+            depart_pos = i * distance_between_cars  # Начальная позиция с учетом равновесного интервала
+            speed_str = f'{start_speed:.2f}' if start_speed is not None else 'max'
+            f.write(f'    <vehicle id="{vehicle_id}" type="car" route="route_0" depart="0" departPos="{depart_pos}" insertionChecks="none" departSpeed="{speed_str}" departLane="best"/>\n')
         
         f.write('</routes>')
     
@@ -99,5 +102,8 @@ if __name__ == "__main__":
         'max_speed_mean': 20,  # 50 км/ч
         'max_speed_std': 0
     }
-    output_file = generate_straight_rou(N, eidm_params, q_fixed)
+    # Пример вызова с равновесной скоростью и интервалом
+    start_speed = 15.0
+    equilibrium_spacing = 20.0
+    output_file = generate_straight_rou(N, eidm_params, q_fixed, start_speed, equilibrium_spacing)
     print(f"Сгенерирован файл маршрутов: {output_file}") 
