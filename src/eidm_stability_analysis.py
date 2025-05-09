@@ -447,7 +447,7 @@ def collect_data_for_param_sweep(
            current_v is None or math.isnan(current_v) or math.isinf(current_v):
             if verbose: print(f"Пропуск {param_to_sweep_key}={val}: s* или v* невалидны (s*={current_s}, v*={current_v})")
             continue
-
+        
         f_s, f_dv, f_v = calculate_partial_derivatives(current_s, current_v, current_params)
         if any(math.isnan(x) or math.isinf(x) for x in [f_s, f_dv, f_v]):
             if verbose: print(f"Пропуск {param_to_sweep_key}={val}: NaN/Inf в производных (s*={current_s:.2f}, v*={current_v:.2f})")
@@ -476,7 +476,7 @@ def plot_stability_for_parameter_sweep(data, swept_param_key, swept_param_label,
     if "Q =" in fixed_condition_label:
         axs0_twin = axs[0].twinx()
         line1, = axs[0].plot(param_x_values, data['v_star'] * 3.6, marker='.', linestyle='-', color='blue', alpha=0.8, label='v* (км/ч)')
-        line2, = axs0_twin.plot(param_x_values, data['s_star'], marker='.', linestyle='-', color='green', alpha=0.8, label='s* (м)')
+        line2, = axs0_twin.plot(param_x_values, data['s_star'], linestyle='-', color='green', alpha=0.8, label='s* (м)')
         
         axs[0].set_ylabel('Равновесная скорость v* (км/ч)', color=line1.get_color())
         axs0_twin.set_ylabel('Равновесная дистанция s* (м)', color=line2.get_color())
@@ -590,7 +590,7 @@ if __name__ == '__main__':
     print("-"*50)
 
     print("\n--- Графики: Варьирование T (время реакции) при фикс. Q ---")
-    target_Q_veh_per_hour = 3600 
+    target_Q_veh_per_hour = 1800 
     target_Q_veh_per_sec = target_Q_veh_per_hour / 3600.0 
     T_sweep_values_for_Q = np.linspace(0.8, 2.5, 50) 
     
