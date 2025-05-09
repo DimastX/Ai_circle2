@@ -655,6 +655,7 @@ def collect_data_for_param_sweep(
             # find_equilibrium_state_for_flow возвращает (v_e, s_e_net)
             current_v, current_s_net = find_equilibrium_state_for_flow(fixed_Q, current_params, verbose=verbose)
         
+        print(f"current_s_net={current_s_net}, current_v={current_v}")
         if current_s_net is None or math.isnan(current_s_net) or math.isinf(current_s_net) or \
            current_v is None or math.isnan(current_v) or math.isinf(current_v) or current_v < -1e-6:
             if verbose: print(f"Пропуск {param_to_sweep_key}={val}: s*_net или v* невалидны (s*_net={current_s_net}, v*={current_v})")
