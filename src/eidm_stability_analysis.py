@@ -301,6 +301,182 @@ def find_equilibrium_state_for_flow(target_Q_veh_per_sec, params,
         if verbose: print(f"Ошибка brentq (RuntimeError): {e} при поиске v_e для Q={target_Q_veh_per_sec:.4f}")
         return None, None
 
+def find_all_equilibrium_states_for_flow(target_Q_veh_per_sec, params, 
+                                         v_search_min_abs=1e-3, 
+                                         xtol_brentq=1e-6, maxiter_brentq=100,
+                                         num_scan_intervals=200,
+                                         verbose=False):
+    """
+    Находит все равновесные скорости v_e и чистые зазоры s_e_net для заданного потока Q.
+    Возвращает список кортежей [(v_e, s_e_net), ...].
+    """
+    l_veh = params['l_vehicle_length']
+    s0 = params['s0_jam_distance']
+    v0_desired = params['v0_desired_speed']
+    results = []
+
+    if target_Q_veh_per_sec < -1e-9:
+        if verbose: print("Ошибка: Целевой поток Q не может быть отрицательным.")
+        return []
+    
+    if abs(target_Q_veh_per_sec) < 1e-9: 
+        # Проверим, что это действительно равновесие
+        accel_at_zero_flow = calculate_idm_acceleration(s0, 0, 0.0, params)
+        if abs(accel_at_zero_flow) < xtol_brentq * 10:
+            return [(0.0, s0)]
+        else:
+            if verbose: print(f"Предупреждение: Для Q=0, состояние (v=0, s_net=s0) не является равновесным (accel={accel_at_zero_flow:.3f})")
+            return []
+
+    # --- Начало определения внутренней функции objective_func_for_flow ---
+    def objective_func_for_flow(v_cand):
+        if v_cand < 0: return 1e12 # Штраф за отрицательную скорость
+        
+        # s_total_cand вычисляется как v_cand / target_Q_veh_per_sec
+        # Но если v_cand очень мало, а Q велико, s_total_cand может быть очень мало.
+        # s_net_cand = s_total_cand - l_veh
+        
+        if abs(v_cand) < 1e-9: # Если скорость почти ноль
+            if target_Q_veh_per_sec > 1e-9: # А поток не ноль
+                # Это означает, что s_total стремится к нулю, s_net к -L. Нефизично.
+                # IDM должен давать большое отрицательное ускорение.
+                # Однако, для поиска корня accel=0, это не решение.
+                # Мы можем просто вернуть большое значение, чтобы brentq не нашел здесь корень,
+                # если только не Q=0 (уже обработано).
+                return 1e12 # Большое значение, чтобы избежать этого как решения для Q > 0
+            else: # v_cand ~ 0 и Q ~ 0, это случай Q=0 (см. выше)
+                 # Здесь мы ищем корень accel(s_net_cand, 0, v_cand) = 0.
+                 # Если Q=0, то s_net_cand не определен из Q.
+                 # Этот путь не должен достигаться, если Q=0 обработан.
+                 return calculate_idm_acceleration(s0, 0, 0.0, params)
+
+
+        s_total_cand = v_cand / target_Q_veh_per_sec
+        s_net_cand = s_total_cand - l_veh
+        
+        # Физические ограничения на s_net_cand
+        if s_net_cand < 0 : # Чистый зазор не может быть отрицательным (v/Q < L)
+             return 1e12  # Штраф
+
+        # Если v_cand > 0 и s_net_cand < s0 (существенно)
+        # Для равновесия с v_cand > 0, мы ожидаем s_net_cand >= s0.
+        # Если s_net_cand < s0, IDM должен давать положительное ускорение (если не затор),
+        # или если это состояние затора (v_cand -> 0), то s_net_cand -> s0.
+        # Если мы ищем accel=0, и s_net_cand < s0 при v_cand > 0, это может быть неустойчивая ветвь.
+        # Для brentq, если accel(s_net_cand_low_s0, 0, v_cand) = 0, это математический корень.
+        # Мы отфильтруем нефизичные решения позже.
+        # Однако, если s_net_cand слишком сильно меньше s0, IDM формула может дать проблемы.
+        # Допустим, s_net_cand может быть немного меньше s0 если это корень.
+
+        # Особый случай: если s_net_cand очень близок к s0, а v_cand тоже очень близок к 0.
+        # Это по сути состояние (v=0, s_net=s0).
+        if abs(v_cand) < xtol_brentq and abs(s_net_cand - s0) < xtol_brentq * 10:
+            # Вернем ускорение для (s0, 0, 0)
+            return calculate_idm_acceleration(s0, 0, 0.0, params)
+            
+        return calculate_idm_acceleration(s_net_cand, 0, v_cand, params)
+    # --- Конец определения внутренней функции objective_func_for_flow ---
+
+    v_min_scan_boundary = target_Q_veh_per_sec * l_veh + 1e-6 # Гарантируем s_net > 0
+    v_min_scan_boundary = max(v_search_min_abs, v_min_scan_boundary) # Неотрицательность
+    v_min_scan_boundary = max(0.0, v_min_scan_boundary)
+    
+    v_max_scan_boundary = v0_desired
+
+    if v_min_scan_boundary >= v_max_scan_boundary - xtol_brentq:
+        if verbose: print(f"Диапазон сканирования для v_e ({v_min_scan_boundary:.3f} - {v_max_scan_boundary:.3f}) слишком мал для Q={target_Q_veh_per_sec:.4f}")
+        # Попробуем проверить единственную точку, если диапазон схлопнулся
+        # Это может быть максимальный поток.
+        # Проверим, является ли v_max_scan_boundary (или v_min_scan_boundary) решением.
+        obj_at_limit = objective_func_for_flow(v_max_scan_boundary)
+        if abs(obj_at_limit) < xtol_brentq * 10:
+            s_net_check = v_max_scan_boundary / target_Q_veh_per_sec - l_veh
+            if s_net_check >= s0 - xtol_brentq*100 or (abs(v_max_scan_boundary)<xtol_brentq and abs(s_net_check-s0)<xtol_brentq*100) : # Допуск для s0
+                if s_net_check >= -xtol_brentq : # Допускаем s_net немного отрицательным из-за xtol
+                     s_net_final = max(0, s_net_check)
+                     if not any(abs(v_max_scan_boundary - r[0]) < xtol_brentq*10 for r in results):
+                        results.append((v_max_scan_boundary, s_net_final))
+                        if verbose: print(f"Найдено решение на границе v_e={v_max_scan_boundary:.3f}, s_e_net={s_net_final:.3f} для Q={target_Q_veh_per_sec:.4f}")
+        return results
+
+
+    scan_points_v = np.linspace(v_min_scan_boundary, v_max_scan_boundary, num_scan_intervals + 1)
+    
+    f_prev = objective_func_for_flow(scan_points_v[0])
+
+    for i in range(num_scan_intervals):
+        v_low = scan_points_v[i]
+        v_high = scan_points_v[i+1]
+        f_curr = objective_func_for_flow(v_high)
+
+        if f_prev * f_curr <= 0: # Смена знака или корень на границе
+            try:
+                # Проверим, не слишком ли мал интервал
+                if abs(v_high - v_low) < xtol_brentq:
+                    if abs(f_prev) < xtol_brentq * 10 : # Корень на v_low
+                        v_e_sol = v_low
+                    elif abs(f_curr) < xtol_brentq * 10 : # Корень на v_high
+                        v_e_sol = v_high
+                    else: # Интервал слишком мал, но нет явного корня на границе
+                        f_prev = f_curr
+                        continue
+                else:
+                    v_e_sol = brentq(objective_func_for_flow, v_low, v_high, xtol=xtol_brentq, maxiter=maxiter_brentq)
+                
+                s_e_total_sol = v_e_sol / target_Q_veh_per_sec
+                s_e_net_sol = s_e_total_sol - l_veh
+
+                # Проверка валидности решения
+                valid_solution = True
+                if s_e_net_sol < -xtol_brentq : # Чистый зазор не может быть отрицательным (с допуском)
+                    valid_solution = False
+                    if verbose: print(f"Отброшено (s_net<0): v_e={v_e_sol:.3f}, s_e_net={s_e_net_sol:.3f}")
+                
+                # Если скорость близка к нулю, чистый зазор должен быть s0
+                if abs(v_e_sol) < xtol_brentq * 10 and abs(s_e_net_sol - s0) > xtol_brentq * 100:
+                    # Это может быть артефакт brentq, если objective_func_for_flow не идеальна около v=0
+                    # Попробуем скорректировать s_e_net_sol к s0 если accel(s0,0,0) ~ 0
+                    accel_s0_v0 = calculate_idm_acceleration(s0, 0, 0.0, params)
+                    if abs(accel_s0_v0) < xtol_brentq * 10 :
+                        if verbose: print(f"Коррекция: для v_e~0 ({v_e_sol:.3f}), s_e_net ({s_e_net_sol:.3f}) был {s_e_net_sol:.3f}, но приведен к s0 ({s0})")
+                        s_e_net_sol = s0
+                    else: # Если (0,s0) не равновесие, то и это не должно быть
+                        valid_solution = False
+                        if verbose: print(f"Отброшено (v_e~0, s_net!=s0, (0,s0) не равновесие): v_e={v_e_sol:.3f}, s_e_net={s_e_net_sol:.3f}")
+
+
+                # Если скорость положительна, чистый зазор должен быть не меньше s0 (с допуском)
+                if v_e_sol > xtol_brentq * 10 and s_e_net_sol < s0 - xtol_brentq * 100 :
+                    valid_solution = False
+                    if verbose: print(f"Отброшено (v_e>0, s_net < s0): v_e={v_e_sol:.3f}, s_e_net={s_e_net_sol:.3f} (s0={s0})")
+
+                if valid_solution:
+                    s_e_net_sol = max(0, s_e_net_sol) # Гарантируем неотрицательность после всех проверок
+                    # Проверка на уникальность (чтобы не добавлять один и тот же корень много раз)
+                    is_unique = True
+                    for r_v, r_s in results:
+                        if abs(r_v - v_e_sol) < xtol_brentq * 10: # Если скорости очень близки
+                            is_unique = False
+                            break
+                    if is_unique:
+                        results.append((v_e_sol, s_e_net_sol))
+                        if verbose: print(f"Найдено решение сканированием: v_e={v_e_sol:.3f}, s_e_net={s_e_net_sol:.3f} для Q={target_Q_veh_per_sec:.4f} в [{v_low:.3f}, {v_high:.3f}]")
+            
+            except ValueError: # brentq не смог найти корень (например, f_prev*f_curr > 0 из-за численных неточностей)
+                if verbose: print(f"ValueError в brentq для Q={target_Q_veh_per_sec:.4f} в [{v_low:.3f}, {v_high:.3f}] (f_prev={f_prev:.2e}, f_curr={f_curr:.2e})")
+                pass
+            except RuntimeError as e: # brentq столкнулся с проблемой
+                 if verbose: print(f"RuntimeError в brentq для Q={target_Q_veh_per_sec:.4f}: {e}")
+                 pass
+        
+        f_prev = f_curr
+    
+    # Сортировка результатов по v_e
+    results.sort(key=lambda x: x[0])
+    if verbose and not results: print(f"Решения для Q={target_Q_veh_per_sec:.4f} не найдены.")
+    elif verbose and results: print(f"Всего найдено {len(results)} решений для Q={target_Q_veh_per_sec:.4f}.")
+    return results
+
 def calculate_partial_derivatives(s_star_net, v_star, params, tol=1e-6):
     """
     Вычисляет частные производные f_s, f_dv, f_v в точке равновесия (s_star_net, 0, v_star).
@@ -643,44 +819,65 @@ def collect_data_for_param_sweep(
         current_params = base_idm_params.copy()
         current_params[param_to_sweep_key] = val
         
-        current_s_net, current_v = None, None
+        equilibria_to_process = [] # Список пар (s_net, v)
 
         if fixed_s_star_net is not None:
             current_s_net = fixed_s_star_net
             current_v = find_equilibrium_velocity(current_s_net, current_params)
+            if current_v is not None and not (math.isnan(current_v) or math.isinf(current_v) or current_v < -1e-6):
+                equilibria_to_process.append({'s_net': current_s_net, 'v': current_v})
         elif fixed_v_star is not None:
             current_v = fixed_v_star
             current_s_net = calculate_s_star_for_fixed_v_star(current_v, current_params)
+            if current_s_net is not None and not (math.isnan(current_s_net) or math.isinf(current_s_net)):
+                 equilibria_to_process.append({'s_net': current_s_net, 'v': current_v})
         elif fixed_Q is not None:
-            # find_equilibrium_state_for_flow возвращает (v_e, s_e_net)
-            current_v, current_s_net = find_equilibrium_state_for_flow(fixed_Q, current_params, verbose=verbose)
+            # find_all_equilibrium_states_for_flow возвращает список [(v_e, s_e_net), ...]
+            found_states = find_all_equilibrium_states_for_flow(fixed_Q, current_params, verbose=verbose)
+            for v_eq, s_net_eq in found_states:
+                # Дополнительная проверка валидности перед добавлением
+                if s_net_eq is not None and not (math.isnan(s_net_eq) or math.isinf(s_net_eq)) and \
+                   v_eq is not None and not (math.isnan(v_eq) or math.isinf(v_eq) or v_eq < -1e-6):
+                    equilibria_to_process.append({'s_net': s_net_eq, 'v': v_eq})
+                elif verbose:
+                    print(f"Отброшено состояние (при Q={fixed_Q:.3f}) для {param_to_sweep_key}={val}: s*_net={s_net_eq}, v*={v_eq}")
         
-        print(f"current_s_net={current_s_net}, current_v={current_v}")
-        if current_s_net is None or math.isnan(current_s_net) or math.isinf(current_s_net) or \
-           current_v is None or math.isnan(current_v) or math.isinf(current_v) or current_v < -1e-6:
-            if verbose: print(f"Пропуск {param_to_sweep_key}={val}: s*_net или v* невалидны (s*_net={current_s_net}, v*={current_v})")
-            continue
+        if not equilibria_to_process and verbose:
+            print(f"Для {param_to_sweep_key}={val}: не найдено валидных равновесных состояний.")
+            # continue # Не пропускаем, чтобы param_vals_list был синхронизирован, если нужно позже заполнять NaN
 
-        f_s, f_dv, f_v = calculate_partial_derivatives(current_s_net, current_v, current_params)
-        if any(math.isnan(x) or math.isinf(x) for x in [f_s, f_dv, f_v]):
-            if verbose: print(f"Пропуск {param_to_sweep_key}={val}: NaN/Inf в производных (s*_net={current_s_net:.2f}, v*={current_v:.2f})")
-            continue
-        
-        param_vals_list.append(val)
-        s_star_net_list.append(current_s_net)
-        v_star_list.append(current_v)
-        
-        rational = check_rational_driving_constraints(f_s, f_dv, f_v)
-        platoon_stable = analyze_platoon_stability(f_s, f_dv, f_v, verbose=False) if rational else False
-        string_stable, K = analyze_string_stability(f_s, f_dv, f_v, verbose=False)
-        
-        K_list.append(K)
-        platoon_stable_list.append(platoon_stable)
-        string_stable_list.append(string_stable if rational else False) 
+        for eq_state in equilibria_to_process:
+            current_s_net_eq = eq_state['s_net']
+            current_v_eq = eq_state['v']
+
+            f_s, f_dv, f_v = calculate_partial_derivatives(current_s_net_eq, current_v_eq, current_params)
+            
+            if any(math.isnan(x) or math.isinf(x) for x in [f_s, f_dv, f_v]):
+                if verbose: print(f"Пропуск {param_to_sweep_key}={val} (s_net={current_s_net_eq:.2f}, v={current_v_eq:.2f}): NaN/Inf в производных")
+                # Заполняем пустыми значениями, чтобы сохранить соответствие с param_values
+                param_vals_list.append(val)
+                s_star_net_list.append(current_s_net_eq) # или float('nan') если хотим четко пометить
+                v_star_list.append(current_v_eq)       # или float('nan')
+                K_list.append(float('nan'))
+                platoon_stable_list.append(False) # или None/NaN
+                string_stable_list.append(False)  # или None/NaN
+                continue
+            
+            param_vals_list.append(val)
+            s_star_net_list.append(current_s_net_eq)
+            v_star_list.append(current_v_eq)
+            
+            rational = check_rational_driving_constraints(f_s, f_dv, f_v)
+            platoon_stable = analyze_platoon_stability(f_s, f_dv, f_v, verbose=False) if rational else False
+            string_stable, K = analyze_string_stability(f_s, f_dv, f_v, verbose=False)
+            
+            K_list.append(K if rational else float('nan')) # K имеет смысл только при рац. вождении для анализа уст-ти
+            platoon_stable_list.append(platoon_stable)
+            string_stable_list.append(string_stable if rational else False) 
         
     return {
         'param_values': np.array(param_vals_list), 
-        's_star_net': np.array(s_star_net_list), # Теперь это чистый зазор
+        's_star_net': np.array(s_star_net_list), 
         'v_star': np.array(v_star_list), 
         'K_condition': np.array(K_list),
         'platoon_stable': np.array(platoon_stable_list), 
@@ -694,31 +891,44 @@ def plot_stability_for_parameter_sweep(data, swept_param_key, swept_param_label,
 
     fig, axs = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
     param_x_values = data['param_values']
+    
+    # Фильтруем NaN значения перед построением scatter, чтобы избежать предупреждений и ошибок
+    valid_indices_vs = ~np.isnan(param_x_values) & ~np.isnan(data['v_star']) & ~np.isnan(data['s_star_net'])
+    valid_indices_k = ~np.isnan(param_x_values) & ~np.isnan(data['K_condition'])
 
     # Верхний график: v* и s*_net (чистый зазор)
     axs0_twin = axs[0].twinx()
-    line1, = axs[0].plot(param_x_values, data['v_star'] * 3.6, marker='.', linestyle='-', color='blue', alpha=0.8, label='v* (км/ч)')
-    line2, = axs0_twin.plot(param_x_values, data['s_star_net'], marker='.', linestyle='-', color='green', alpha=0.8, label='s*_net (м)') # s_star_net
     
-    axs[0].set_ylabel('Равновесная скорость v* (км/ч)', color=line1.get_color())
-    axs0_twin.set_ylabel('Равновесный чистый зазор s*_net (м)', color=line2.get_color()) # Обновлено
-    axs[0].tick_params(axis='y', labelcolor=line1.get_color())
-    axs0_twin.tick_params(axis='y', labelcolor=line2.get_color())
+    # Используем scatter вместо plot
+    sc1 = axs[0].scatter(param_x_values[valid_indices_vs], data['v_star'][valid_indices_vs] * 3.6, marker='o', s=20, alpha=0.7, color='blue', label='v* (км/ч)')
+    sc2 = axs0_twin.scatter(param_x_values[valid_indices_vs], data['s_star_net'][valid_indices_vs], marker='x', s=20, alpha=0.7, color='green', label='s*_net (м)')
     
-    lines = [line1, line2]
-    axs[0].legend(lines, [l.get_label() for l in lines], loc='best')
-    axs[0].set_title(f'Зависимость v* и s*_net от {swept_param_label}') # Обновлено
+    axs[0].set_ylabel('Равновесная скорость v* (км/ч)', color='blue') # sc1.get_facecolor() может вернуть массив
+    axs0_twin.set_ylabel('Равновесный чистый зазор s*_net (м)', color='green') # sc2.get_facecolor()
+    axs[0].tick_params(axis='y', labelcolor='blue')
+    axs0_twin.tick_params(axis='y', labelcolor='green')
+    
+    # Создание легенды для scatter plots
+    # axs[0].legend(handles=[sc1, sc2], loc='best') # Прямое использование sc1, sc2 для legend
+    # Альтернативный способ для scatter, если handles не работает прямо
+    from matplotlib.lines import Line2D
+    legend_elements = [Line2D([0], [0], marker='o', color='w', label='v* (км/ч)', markersize=5, markerfacecolor='blue'),
+                       Line2D([0], [0], marker='x', color='w', label='s*_net (м)', markersize=5, markerfacecolor='green')]
+    axs[0].legend(handles=legend_elements, loc='best')
+
+    axs[0].set_title(f'Зависимость v* и s*_net от {swept_param_label}')
     axs[0].grid(True)
 
 
     # Средний график: Критерий K
-    axs[1].plot(param_x_values, data['K_condition'], marker='.', linestyle='-', color='r')
+    # Используем scatter вместо plot
+    axs[1].scatter(param_x_values[valid_indices_k], data['K_condition'][valid_indices_k], marker='.', s=20, color='r', alpha=0.7)
     axs[1].axhline(0, color='black', lw=0.8, linestyle='--')
     axs[1].set_ylabel('Критерий K')
     axs[1].set_title(f'Критерий устойчивости цепочки K vs. {swept_param_label}')
     axs[1].grid(True)
 
-    # Нижний график: Области устойчивости
+    # Нижний график: Области устойчивости (уже использует scatter)
     ps_mask = data['platoon_stable']
     ss_mask = data['string_stable']
     valid_indices = ~np.isnan(param_x_values) & ~np.isnan(data['K_condition']) 
