@@ -36,7 +36,6 @@ config/routes/*.rou.xml
 data/simulations/
 *.csv
 *.log
-results/
 
 # Данные и результаты
 *.png
