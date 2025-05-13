@@ -6,6 +6,7 @@ import argparse # Добавлено для аргументов командн�
 import os # Добавлено для работы с путями
 import subprocess # Добавлено для запуска внешних скриптов
 from datetime import datetime # Для генерации уникальных имен директорий
+import json # Добавлено для чтения JSON
 
 # Стандартные параметры IDM из статьи (Таблица 1, s1=0)
 DEFAULT_IDM_PARAMS = {
@@ -710,7 +711,7 @@ def collect_data_for_plots(s_star_net_range, params):
         rational = check_rational_driving_constraints(f_s, f_dv, f_v)
         
         platoon_stable = analyze_platoon_stability(f_s, f_dv, f_v, verbose=False) if rational else False
-        string_stable, K = analyze_string_stability(f_s, f_dv, f_v, verbose=False)
+        string_stable, K = analyze_string_stability(f_s,f_dv,f_v, verbose=False)
         
         platoon_flags.append(platoon_stable)
         string_flags.append(string_stable if rational else False) # Строгая уст-ть только при рац. вождении
@@ -887,71 +888,399 @@ def collect_data_for_param_sweep(
         'string_stable': np.array(string_stable_list)
     }
 
-def plot_stability_for_parameter_sweep(data, swept_param_key, swept_param_label, fixed_condition_label, base_params):
+def plot_stability_for_parameter_sweep(data, swept_param_key, swept_param_label, fixed_condition_label, base_params, simulation_results=None):
     if len(data['param_values']) == 0:
         print(f"Нет данных для построения графиков для параметра {swept_param_label}.")
         return
 
-    fig, axs = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
-    param_x_values = data['param_values']
-    
-    # Фильтруем NaN значения перед построением scatter, чтобы избежать предупреждений и ошибок
-    valid_indices_vs = ~np.isnan(param_x_values) & ~np.isnan(data['v_star']) & ~np.isnan(data['s_star_net'])
-    valid_indices_k = ~np.isnan(param_x_values) & ~np.isnan(data['K_condition'])
+    # --- Новая логика для разделения ветвей ---
+    grouped_data = {}
+    for i, param_val in enumerate(data['param_values']):
+        if param_val not in grouped_data:
+            grouped_data[param_val] = []
+        # Добавляем кортеж со всеми релевантными данными для этой точки
+        grouped_data[param_val].append({
+            'v_star': data['v_star'][i],
+            's_star_net': data['s_star_net'][i],
+            'K_condition': data['K_condition'][i], # K больше не используется в графике, но сохраняем для полноты
+            'platoon_stable': data['platoon_stable'][i],
+            # 'string_stable': data['string_stable'][i] # String stability больше не используется
+        })
+
+    # Списки для разделенных данных
+    param_x_lower, v_lower, s_net_lower, ps_lower = [], [], [], []
+    param_x_upper, v_upper, s_net_upper, ps_upper = [], [], [], []
+    param_x_single, v_single, s_net_single, ps_single = [], [], [], []
+
+    unique_param_values_sorted = sorted(grouped_data.keys())
+
+    for param_val in unique_param_values_sorted:
+        states = grouped_data[param_val]
+        # Убираем состояния с NaN v_star или s_star_net перед сортировкой/разделением
+        valid_states = [s for s in states if not math.isnan(s['v_star']) and not math.isnan(s['s_star_net'])]
+        
+        if not valid_states:
+            continue
+
+        if len(valid_states) == 1:
+            state = valid_states[0]
+            param_x_single.append(param_val)
+            v_single.append(state['v_star'])
+            s_net_single.append(state['s_star_net'])
+            ps_single.append(state['platoon_stable'])
+        elif len(valid_states) >= 2:
+            # Сортируем по v_star, чтобы найти нижнюю и верхнюю ветвь
+            valid_states.sort(key=lambda x: x['v_star'])
+            lower_state = valid_states[0]
+            upper_state = valid_states[-1]
+            
+            param_x_lower.append(param_val)
+            v_lower.append(lower_state['v_star'])
+            s_net_lower.append(lower_state['s_star_net'])
+            ps_lower.append(lower_state['platoon_stable'])
+
+            param_x_upper.append(param_val)
+            v_upper.append(upper_state['v_star'])
+            s_net_upper.append(upper_state['s_star_net'])
+            ps_upper.append(upper_state['platoon_stable'])
+            
+            # Обработка промежуточных состояний (если их больше 2) - пока просто игнорируем
+            if len(valid_states) > 2:
+                 print(f"Предупреждение: найдено {len(valid_states)} состояний для {swept_param_key}={param_val}. Используются только нижнее и верхнее.")
+
+    # Преобразуем в numpy массивы
+    param_x_lower, v_lower, s_net_lower, ps_lower = np.array(param_x_lower), np.array(v_lower), np.array(s_net_lower), np.array(ps_lower, dtype=bool)
+    param_x_upper, v_upper, s_net_upper, ps_upper = np.array(param_x_upper), np.array(v_upper), np.array(s_net_upper), np.array(ps_upper, dtype=bool)
+    param_x_single, v_single, s_net_single, ps_single = np.array(param_x_single), np.array(v_single), np.array(s_net_single), np.array(ps_single, dtype=bool)
+    # --- Конец новой логики ---
+
+
+    fig, axs = plt.subplots(3, 1, figsize=(10, 12), sharex=True) # Возвращаем 3 строки
+    # param_x_values = data['param_values'] # Больше не используем общий массив
+
+    # # Фильтруем NaN значения перед построением scatter, чтобы избежать предупреждений и ошибок
+    # valid_indices_vs = ~np.isnan(param_x_values) & ~np.isnan(data['v_star']) & ~np.isnan(data['s_star_net'])
+    # valid_indices_k = ~np.isnan(param_x_values) & ~np.isnan(data['K_condition']) # K больше не используется
 
     # Верхний график: v* и s*_net (чистый зазор)
-    axs0_twin = axs[0].twinx()
+    ax0 = axs[0]
+    ax0_twin = ax0.twinx()
     
-    # Используем scatter вместо plot
-    sc1 = axs[0].scatter(param_x_values[valid_indices_vs], data['v_star'][valid_indices_vs] * 3.6, marker='o', s=20, alpha=0.7, color='blue', label='v* (км/ч)')
-    sc2 = axs0_twin.scatter(param_x_values[valid_indices_vs], data['s_star_net'][valid_indices_vs], marker='x', s=20, alpha=0.7, color='green', label='s*_net (м)')
+    # Используем scatter вместо plot, с разными цветами
+    # Нижняя ветвь (красный)
+    if len(param_x_lower) > 0:
+        sc_v_lower = ax0.scatter(param_x_lower, v_lower * 3.6, marker='o', s=25, alpha=0.7, color='red', label='v* (Нижн. ветвь, км/ч)')
+        sc_s_lower = ax0_twin.scatter(param_x_lower, s_net_lower, marker='x', s=25, alpha=0.7, color='darkred', label='s*_net (Нижн. ветвь, м)')
+    # Верхняя ветвь (синий)
+    if len(param_x_upper) > 0:
+        sc_v_upper = ax0.scatter(param_x_upper, v_upper * 3.6, marker='o', s=25, alpha=0.7, color='blue', label='v* (Верхн. ветвь, км/ч)')
+        sc_s_upper = ax0_twin.scatter(param_x_upper, s_net_upper, marker='x', s=25, alpha=0.7, color='darkblue', label='s*_net (Верхн. ветвь, м)')
+    # Одиночные точки (черный)
+    if len(param_x_single) > 0:
+        sc_v_single = ax0.scatter(param_x_single, v_single * 3.6, marker='o', s=25, alpha=0.7, color='black', label='v* (Единств., км/ч)')
+        sc_s_single = ax0_twin.scatter(param_x_single, s_net_single, marker='x', s=25, alpha=0.7, color='dimgray', label='s*_net (Единств., м)')
+
     
-    axs[0].set_ylabel('Равновесная скорость v* (км/ч)', color='blue') # sc1.get_facecolor() может вернуть массив
-    axs0_twin.set_ylabel('Равновесный чистый зазор s*_net (м)', color='green') # sc2.get_facecolor()
-    axs[0].tick_params(axis='y', labelcolor='blue')
-    axs0_twin.tick_params(axis='y', labelcolor='green')
+    ax0.set_ylabel('Равновесная скорость v* (км/ч)', color='black') # Основная ось Y
+    ax0_twin.set_ylabel('Равновесный чистый зазор s*_net (м)', color='black') # Вторичная ось Y
+    # ax0.tick_params(axis='y', labelcolor='blue') # Убираем окрашивание тиков
+    # ax0_twin.tick_params(axis='y', labelcolor='green') # Убираем окрашивание тиков
     
-    # Создание легенды для scatter plots
-    # axs[0].legend(handles=[sc1, sc2], loc='best') # Прямое использование sc1, sc2 для legend
-    # Альтернативный способ для scatter, если handles не работает прямо
-    from matplotlib.lines import Line2D
-    legend_elements = [Line2D([0], [0], marker='o', color='w', label='v* (км/ч)', markersize=5, markerfacecolor='blue'),
-                       Line2D([0], [0], marker='x', color='w', label='s*_net (м)', markersize=5, markerfacecolor='green')]
-    axs[0].legend(handles=legend_elements, loc='best')
-
-    axs[0].set_title(f'Зависимость v* и s*_net от {swept_param_label}')
-    axs[0].grid(True)
-
-
-    # Средний график: Критерий K
-    # Используем scatter вместо plot
-    axs[1].scatter(param_x_values[valid_indices_k], data['K_condition'][valid_indices_k], marker='.', s=20, color='r', alpha=0.7)
-    axs[1].axhline(0, color='black', lw=0.8, linestyle='--')
-    axs[1].set_ylabel('Критерий K')
-    axs[1].set_title(f'Критерий устойчивости цепочки K vs. {swept_param_label}')
-    axs[1].grid(True)
-
-    # Нижний график: Области устойчивости (уже использует scatter)
-    ps_mask = data['platoon_stable']
-    ss_mask = data['string_stable']
-    valid_indices = ~np.isnan(param_x_values) & ~np.isnan(data['K_condition']) 
+    # Создание легенды для scatter plots - собираем все handles и labels
+    handles, labels = [], []
+    if len(param_x_lower) > 0: 
+        handles.extend([sc_v_lower, sc_s_lower])
+        labels.extend([sc_v_lower.get_label(), sc_s_lower.get_label()])
+    if len(param_x_upper) > 0: 
+        handles.extend([sc_v_upper, sc_s_upper])
+        labels.extend([sc_v_upper.get_label(), sc_s_upper.get_label()])
+    if len(param_x_single) > 0: 
+        handles.extend([sc_v_single, sc_s_single])
+        labels.extend([sc_v_single.get_label(), sc_s_single.get_label()])
     
-    px_valid = param_x_values[valid_indices]
-    ps_mask_valid = ps_mask[valid_indices]
-    ss_mask_valid = ss_mask[valid_indices]
+    if handles: # Показываем легенду, только если есть что показывать
+        ax0.legend(handles=handles, labels=labels, loc='best', fontsize='small')
 
-    if np.any(ps_mask_valid): axs[2].scatter(px_valid[ps_mask_valid], np.ones(np.sum(ps_mask_valid))*1.0, c='c', marker='o', label='Взвод Уст.', alpha=0.7)
-    if np.any(~ps_mask_valid): axs[2].scatter(px_valid[~ps_mask_valid], np.ones(np.sum(~ps_mask_valid))*1.0, c='m', marker='x', label='Взвод Неуст.', alpha=0.7)
-    if np.any(ss_mask_valid): axs[2].scatter(px_valid[ss_mask_valid], np.ones(np.sum(ss_mask_valid))*0.5, c='g', marker='o', label='Цеп. Уст.', alpha=0.7)
-    if np.any(~ss_mask_valid): axs[2].scatter(px_valid[~ss_mask_valid], np.ones(np.sum(~ss_mask_valid))*0.5, c='r', marker='x', label='Цеп. Неуст.', alpha=0.7)
+    ax0.set_title(f'Зависимость v* и s*_net от {swept_param_label}')
+    ax0.grid(True)
+
+
+    # Средний график (axs[1]): Критерий K
+    ax_k = axs[1]
+    k_handles, k_labels = [], []
+
+    # K для нижней ветви (красный)
+    if len(param_x_lower) > 0:
+        valid_k_lower = ~np.isnan(v_lower) # K рассчитывается всегда, но осмыслен при валидном v_star
+        k_vals_lower = np.array([grouped_data[p][0]['K_condition'] for p in param_x_lower if grouped_data[p] and not math.isnan(grouped_data[p][0]['v_star'])]) # Предполагаем, что первое состояние - нижнее
+        if len(k_vals_lower) == len(param_x_lower[valid_k_lower]): # Проверка совпадения длин
+             h_k_lower = ax_k.scatter(param_x_lower[valid_k_lower], k_vals_lower, marker='.', s=25, color='red', alpha=0.7, label='K (Нижн. ветвь)')
+             if h_k_lower.get_label() not in k_labels: k_handles.append(h_k_lower); k_labels.append(h_k_lower.get_label())
+        elif len(k_vals_lower) > 0: # Если длины не совпадают, но k_vals_lower не пуст, рисуем что есть
+             print(f"Предупреждение: Несовпадение длин для K (нижняя ветвь). param_x_lower[valid_k_lower]: {len(param_x_lower[valid_k_lower])}, k_vals_lower: {len(k_vals_lower)}")
+             # Попытка нарисовать с меньшим из массивов, если возможно, или пропустить
+             min_len = min(len(param_x_lower[valid_k_lower]), len(k_vals_lower))
+             if min_len > 0:
+                h_k_lower = ax_k.scatter(param_x_lower[valid_k_lower][:min_len], k_vals_lower[:min_len], marker='.', s=25, color='red', alpha=0.7, label='K (Нижн. ветвь)')
+                if h_k_lower.get_label() not in k_labels: k_handles.append(h_k_lower); k_labels.append(h_k_lower.get_label())
+
+
+    # K для верхней ветви (синий)
+    if len(param_x_upper) > 0:
+        valid_k_upper = ~np.isnan(v_upper)
+        # Ищем последнее валидное состояние для каждого param_x_upper, чтобы получить K верхней ветви
+        k_vals_upper_list = []
+        for p_val in param_x_upper:
+            states_for_p = [s for s in grouped_data[p_val] if not math.isnan(s['v_star'])]
+            if states_for_p:
+                states_for_p.sort(key=lambda x: x['v_star'])
+                k_vals_upper_list.append(states_for_p[-1]['K_condition']) # K от последнего (верхнего) состояния
+        k_vals_upper = np.array(k_vals_upper_list)
+
+        if len(k_vals_upper) == len(param_x_upper[valid_k_upper]):
+            h_k_upper = ax_k.scatter(param_x_upper[valid_k_upper], k_vals_upper, marker='.', s=25, color='blue', alpha=0.7, label='K (Верхн. ветвь)')
+            if h_k_upper.get_label() not in k_labels: k_handles.append(h_k_upper); k_labels.append(h_k_upper.get_label())
+        elif len(k_vals_upper) > 0:
+            print(f"Предупреждение: Несовпадение длин для K (верхняя ветвь). param_x_upper[valid_k_upper]: {len(param_x_upper[valid_k_upper])}, k_vals_upper: {len(k_vals_upper)}")
+            min_len = min(len(param_x_upper[valid_k_upper]), len(k_vals_upper))
+            if min_len > 0:
+                h_k_upper = ax_k.scatter(param_x_upper[valid_k_upper][:min_len], k_vals_upper[:min_len], marker='.', s=25, color='blue', alpha=0.7, label='K (Верхн. ветвь)')
+                if h_k_upper.get_label() not in k_labels: k_handles.append(h_k_upper); k_labels.append(h_k_upper.get_label())
+
+
+    # K для одиночных точек (черный)
+    if len(param_x_single) > 0:
+        valid_k_single = ~np.isnan(v_single)
+        k_vals_single = np.array([grouped_data[p][0]['K_condition'] for p in param_x_single if grouped_data[p] and not math.isnan(grouped_data[p][0]['v_star'])])
+        if len(k_vals_single) == len(param_x_single[valid_k_single]):
+            h_k_single = ax_k.scatter(param_x_single[valid_k_single], k_vals_single, marker='.', s=25, color='black', alpha=0.7, label='K (Единств.)')
+            if h_k_single.get_label() not in k_labels: k_handles.append(h_k_single); k_labels.append(h_k_single.get_label())
+        elif len(k_vals_single) > 0 :
+            print(f"Предупреждение: Несовпадение длин для K (одиночные). param_x_single[valid_k_single]: {len(param_x_single[valid_k_single])}, k_vals_single: {len(k_vals_single)}")
+            min_len = min(len(param_x_single[valid_k_single]), len(k_vals_single))
+            if min_len > 0:
+                h_k_single = ax_k.scatter(param_x_single[valid_k_single][:min_len], k_vals_single[:min_len], marker='.', s=25, color='black', alpha=0.7, label='K (Единств.)')
+                if h_k_single.get_label() not in k_labels: k_handles.append(h_k_single); k_labels.append(h_k_single.get_label())
+
+
+    ax_k.axhline(0, color='black', lw=0.8, linestyle='--')
+    ax_k.set_ylabel('Критерий K (уст. потока)') # Заменено
+    ax_k.set_title(f'Критерий K vs. {swept_param_label}')
+    if k_handles:
+        ax_k.legend(handles=k_handles, labels=k_labels, loc='best', fontsize='small')
+    ax_k.grid(True)
+
+    # Нижний график (теперь axs[2]): Области устойчивости ЦЕПОЧКИ (String Stability)
+    ax_stab = axs[2] # Используем третий subplot
     
-    axs[2].set_yticks([0.5,1.0])
-    axs[2].set_yticklabels(['Цепочка','Взвод'])
-    axs[2].set_xlabel(swept_param_label)
-    axs[2].set_title('Области устойчивости')
-    axs[2].set_ylim(0,1.5)
-    axs[2].legend(fontsize='small')
-    axs[2].grid(True)
+    stab_handles, stab_labels = [],[]
+    k_stability_threshold = 1e-9 # Порог для K > 0
+    
+    # --- Используем K_condition для определения стабильности/нестабильности --- 
+
+    # Нижняя ветвь (y=0.5, цвет красный)
+    if len(param_x_lower) > 0:
+        # Получаем соответствующие K для нижней ветви (уже извлечено для среднего графика)
+        k_vals_lower_stab = np.array([grouped_data[p][0]['K_condition'] for p in param_x_lower if grouped_data[p] and not math.isnan(grouped_data[p][0]['v_star'])])
+        # Создаем маски на основе K
+        if len(k_vals_lower_stab) == len(param_x_lower): # Проверяем, что длины совпадают
+            string_stable_lower_mask = k_vals_lower_stab > k_stability_threshold
+            string_unstable_lower_mask = k_vals_lower_stab <= k_stability_threshold
+
+            if np.any(string_stable_lower_mask): 
+                 h_sl_s = ax_stab.scatter(param_x_lower[string_stable_lower_mask], np.ones(np.sum(string_stable_lower_mask))*0.5, c='red', marker='o', alpha=0.7, label='Поток Уст. (Нижн., K>0)') # Заменено
+                 if h_sl_s.get_label() not in stab_labels: stab_handles.append(h_sl_s); stab_labels.append(h_sl_s.get_label())
+            if np.any(string_unstable_lower_mask): 
+                 h_sl_u = ax_stab.scatter(param_x_lower[string_unstable_lower_mask], np.ones(np.sum(string_unstable_lower_mask))*0.5, c='red', marker='x', alpha=0.7, label='Поток Неуст. (Нижн., K<=0)') # Заменено
+                 if h_sl_u.get_label() not in stab_labels: stab_handles.append(h_sl_u); stab_labels.append(h_sl_u.get_label())
+        else:
+            print(f"Предупреждение: Пропуск отрисовки string stability для нижней ветви из-за несовпадения длин K ({len(k_vals_lower_stab)}) и param_x_lower ({len(param_x_lower)}).")
+
+    # Верхняя ветвь (y=1.0, цвет синий)
+    if len(param_x_upper) > 0:
+        # Получаем соответствующие K для верхней ветви
+        k_vals_upper_list_stab = []
+        valid_param_x_upper_stab = [] # Сохраняем param_x, для которых нашли K
+        for p_val in param_x_upper:
+            states_for_p = [s for s in grouped_data[p_val] if not math.isnan(s['v_star'])]
+            if states_for_p:
+                states_for_p.sort(key=lambda x: x['v_star'])
+                k_val = states_for_p[-1]['K_condition']
+                if not math.isnan(k_val):
+                    k_vals_upper_list_stab.append(k_val)
+                    valid_param_x_upper_stab.append(p_val)
+        k_vals_upper_stab = np.array(k_vals_upper_list_stab)
+        valid_param_x_upper_stab = np.array(valid_param_x_upper_stab)
+        
+        if len(k_vals_upper_stab) > 0:
+            string_stable_upper_mask = k_vals_upper_stab > k_stability_threshold
+            string_unstable_upper_mask = k_vals_upper_stab <= k_stability_threshold
+
+            if np.any(string_stable_upper_mask):
+                 h_su_s = ax_stab.scatter(valid_param_x_upper_stab[string_stable_upper_mask], np.ones(np.sum(string_stable_upper_mask))*1.0, c='blue', marker='o', alpha=0.7, label='Поток Уст. (Верхн., K>0)') # Заменено
+                 if h_su_s.get_label() not in stab_labels: stab_handles.append(h_su_s); stab_labels.append(h_su_s.get_label())
+            if np.any(string_unstable_upper_mask):
+                 h_su_u = ax_stab.scatter(valid_param_x_upper_stab[string_unstable_upper_mask], np.ones(np.sum(string_unstable_upper_mask))*1.0, c='blue', marker='x', alpha=0.7, label='Поток Неуст. (Верхн., K<=0)') # Заменено
+                 if h_su_u.get_label() not in stab_labels: stab_handles.append(h_su_u); stab_labels.append(h_su_u.get_label())
+        else:
+             print(f"Предупреждение: Нет валидных K для отрисовки string stability для верхней ветви.")
+
+
+    # Одиночные точки (y=1.0, цвет черный)
+    if len(param_x_single) > 0:
+        # Получаем соответствующие K для одиночных точек
+        k_vals_single_stab = np.array([grouped_data[p][0]['K_condition'] for p in param_x_single if grouped_data[p] and not math.isnan(grouped_data[p][0]['v_star'])])
+        if len(k_vals_single_stab) == len(param_x_single): # Проверка длин
+            string_stable_single_mask = k_vals_single_stab > k_stability_threshold
+            string_unstable_single_mask = k_vals_single_stab <= k_stability_threshold
+
+            if np.any(string_stable_single_mask): 
+                 h_ss_s = ax_stab.scatter(param_x_single[string_stable_single_mask], np.ones(np.sum(string_stable_single_mask))*1.0, c='black', marker='o', alpha=0.7, label='Поток Уст. (Единств., K>0)') # Заменено
+                 if h_ss_s.get_label() not in stab_labels: stab_handles.append(h_ss_s); stab_labels.append(h_ss_s.get_label())
+            if np.any(string_unstable_single_mask): 
+                 h_ss_u = ax_stab.scatter(param_x_single[string_unstable_single_mask], np.ones(np.sum(string_unstable_single_mask))*1.0, c='black', marker='x', alpha=0.7, label='Поток Неуст. (Единств., K<=0)') # Заменено
+                 if h_ss_u.get_label() not in stab_labels: stab_handles.append(h_ss_u); stab_labels.append(h_ss_u.get_label())
+        else:
+             print(f"Предупреждение: Пропуск отрисовки string stability для одиночных точек из-за несовпадения длин K ({len(k_vals_single_stab)}) и param_x_single ({len(param_x_single)}).")
+    
+    
+    # --- Добавляем ЭКСПЕРИМЕНТАЛЬНЫЕ точки из симуляций (если есть) --- 
+    if simulation_results:
+        print(f"Добавление {len(simulation_results)} экспериментальных точек на график устойчивости...")
+        exp_handles, exp_labels = [], []
+        for sim_res in simulation_results:
+            sim_T = sim_res['T']
+            sim_v_e = sim_res['v_star']
+            sim_waves = sim_res['waves_observed']
+            
+            # Определяем, к какой ветви относится точка
+            # Ищем ближайшую теоретическую точку по T
+            matching_lower = [(px, vx) for px, vx in zip(param_x_lower, v_lower) if abs(px - sim_T) < 1e-4]
+            matching_upper = [(px, vx) for px, vx in zip(param_x_upper, v_upper) if abs(px - sim_T) < 1e-4]
+            matching_single = [(px, vx) for px, vx in zip(param_x_single, v_single) if abs(px - sim_T) < 1e-4]
+            
+            y_pos = None
+            color = 'gray' # Цвет по умолчанию, если ветвь не найдена
+            branch_label = "?"
+            
+            # Находим ближайшую по v_e ветвь для данного T
+            best_match_diff = float('inf')
+
+            if matching_lower:
+                diff = abs(matching_lower[0][1] - sim_v_e)
+                if diff < best_match_diff:
+                    best_match_diff = diff
+                    y_pos = 0.5
+                    color = 'red'
+                    branch_label = "Нижн."
+            if matching_upper:
+                diff = abs(matching_upper[0][1] - sim_v_e)
+                if diff < best_match_diff:
+                    best_match_diff = diff
+                    y_pos = 1.0
+                    color = 'blue'
+                    branch_label = "Верхн."
+            if matching_single: # Одиночные точки рисуем на уровне верхней ветви
+                diff = abs(matching_single[0][1] - sim_v_e)
+                if diff < best_match_diff:
+                    best_match_diff = diff
+                    y_pos = 1.0
+                    color = 'black'
+                    branch_label = "Единств."
+
+            if y_pos is not None:
+                # Используем разный маркер для наблюдения волн
+                marker = 'X' if sim_waves else 'o' # 'X' - нестабильно (волны есть), 'o' - стабильно (волн нет)
+                label_suffix = "Нестаб. (симуляция)" if sim_waves else "Стаб. (симуляция)"
+                marker_label = f'{branch_label} {label_suffix}'
+                marker_size = 100 if sim_waves else 80 # Делаем 'X' крупнее
+                edge_color = 'black' if sim_waves else color # Черный контур для 'X'
+                
+                h_exp = ax_stab.scatter(sim_T, y_pos, 
+                                        marker=marker, 
+                                        s=marker_size, 
+                                        edgecolors=edge_color, 
+                                        facecolors=color if not sim_waves else 'none', # Заливка только для 'o'
+                                        linewidth=1.5, 
+                                        alpha=0.8, 
+                                        label=marker_label)
+                # Добавляем маркер в легенду, если такого типа еще нет
+                if marker_label not in exp_labels:
+                    exp_handles.append(h_exp)
+                    exp_labels.append(marker_label)
+            else:
+                print(f"Предупреждение: Не удалось сопоставить точку симуляции (T={sim_T:.3f}, v={sim_v_e:.2f}) с теоретической ветвью.")
+
+        # Добавляем уникальные маркеры эксперимента в общую легенду
+        stab_handles.extend(exp_handles)
+        stab_labels.extend(exp_labels)
+    # --- Конец добавления экспериментальных точек ---
+
+
+    # --- Старый код для Platoon Stability (комментарии удалены) --- 
+    # if len(param_x_lower) > 0:
+    #     # Получаем соответствующие ps для нижней ветви
+    #     ps_lower_stable_mask = ps_lower 
+    #     ps_lower_unstable_mask = ~ps_lower
+    #     if np.any(ps_lower_stable_mask): 
+    #          # Используем маску для выбора данных и правильный маркер
+    #          h_pl_s = ax_stab.scatter(param_x_lower[ps_lower_stable_mask], np.ones(np.sum(ps_lower_stable_mask))*0.5, c='red', marker='o', alpha=0.7, label='Взвод Уст. (Нижн.)')
+    #          if h_pl_s.get_label() not in stab_labels: stab_handles.append(h_pl_s); stab_labels.append(h_pl_s.get_label())
+    #     if np.any(ps_lower_unstable_mask): 
+    #          # Используем маску для выбора данных и правильный маркер
+    #          h_pl_u = ax_stab.scatter(param_x_lower[ps_lower_unstable_mask], np.ones(np.sum(ps_lower_unstable_mask))*0.5, c='red', marker='x', alpha=0.7, label='Взвод Неуст. (Нижн.)')
+    #          if h_pl_u.get_label() not in stab_labels: stab_handles.append(h_pl_u); stab_labels.append(h_pl_u.get_label())
+            
+    # # Верхняя ветвь (y=1.0, цвет синий)
+    # if len(param_x_upper) > 0:
+    #     ps_upper_stable_mask = ps_upper
+    #     ps_upper_unstable_mask = ~ps_upper
+    #     if np.any(ps_upper_stable_mask): 
+    #          # Используем маску для выбора данных и правильный маркер
+    #          h_pu_s = ax_stab.scatter(param_x_upper[ps_upper_stable_mask], np.ones(np.sum(ps_upper_stable_mask))*1.0, c='blue', marker='o', alpha=0.7, label='Взвод Уст. (Верхн.)')
+    #          if h_pu_s.get_label() not in stab_labels: stab_handles.append(h_pu_s); stab_labels.append(h_pu_s.get_label())
+    #     if np.any(ps_upper_unstable_mask): 
+    #          # Используем маску для выбора данных и правильный маркер
+    #          h_pu_u = ax_stab.scatter(param_x_upper[ps_upper_unstable_mask], np.ones(np.sum(ps_upper_unstable_mask))*1.0, c='blue', marker='x', alpha=0.7, label='Взвод Неуст. (Верхн.)')
+    #          if h_pu_u.get_label() not in stab_labels: stab_handles.append(h_pu_u); stab_labels.append(h_pu_u.get_label())
+
+    # # Одиночные точки (y=1.0, цвет черный)
+    # if len(param_x_single) > 0:
+    #     ps_single_stable_mask = ps_single
+    #     ps_single_unstable_mask = ~ps_single
+    #     if np.any(ps_single_stable_mask): 
+    #          # Используем маску для выбора данных и правильный маркер
+    #          h_ps_s = ax_stab.scatter(param_x_single[ps_single_stable_mask], np.ones(np.sum(ps_single_stable_mask))*1.0, c='black', marker='o', alpha=0.7, label='Взвод Уст. (Единств.)')
+    #          if h_ps_s.get_label() not in stab_labels: stab_handles.append(h_ps_s); stab_labels.append(h_ps_s.get_label())
+    #     if np.any(ps_single_unstable_mask): 
+    #          # Используем маску для выбора данных и правильный маркер
+    #          h_ps_u = ax_stab.scatter(param_x_single[ps_single_unstable_mask], np.ones(np.sum(ps_single_unstable_mask))*1.0, c='black', marker='x', alpha=0.7, label='Взвод Неуст. (Единств.)')
+    #          if h_ps_u.get_label() not in stab_labels: stab_handles.append(h_ps_u); stab_labels.append(h_ps_u.get_label())
+
+
+    # --- Конец старого кода Platoon Stability ---
+    
+    # String stability - УБРАН
+    # ss_mask = data['string_stable']
+    # valid_indices = ~np.isnan(param_x_values) & ~np.isnan(data['K_condition']) 
+    # px_valid = param_x_values[valid_indices]
+    # ss_mask_valid = ss_mask[valid_indices]
+    # if np.any(ss_mask_valid): axs[2].scatter(px_valid[ss_mask_valid], np.ones(np.sum(ss_mask_valid))*0.5, c='g', marker='o', label='Цеп. Уст.', alpha=0.7)
+    # if np.any(~ss_mask_valid): axs[2].scatter(px_valid[~ss_mask_valid], np.ones(np.sum(~ss_mask_valid))*0.5, c='r', marker='x', label='Цеп. Неуст.', alpha=0.7)
+    
+    ax_stab.set_yticks([0.5, 1.0])
+    ax_stab.set_yticklabels(['Поток (Нижн. v*)', 'Поток (Верхн. v*)']) # Заменено
+    ax_stab.set_xlabel(swept_param_label)
+    ax_stab.set_title('Устойчивость потока (String Stability)') # Заменено
+    ax_stab.set_ylim(0.2, 1.3) # Скорректированы пределы
+    if stab_handles: # Показываем легенду, если есть что показывать
+        # Сортируем метки для лучшего порядка в легенде
+        # Пример сортировки: Уст.(Верхн), Неуст.(Верхн), Уст.(Нижн), Неуст.(Нижн), ...
+        handles_labels_sorted = sorted(zip(stab_handles, stab_labels), key=lambda x: x[1]) 
+        stab_handles = [hl[0] for hl in handles_labels_sorted]
+        stab_labels = [hl[1] for hl in handles_labels_sorted]
+        ax_stab.legend(handles=stab_handles, labels=stab_labels, fontsize='small', loc='best')
+    ax_stab.grid(True)
 
     param_details_list = []
     for k_param, v_param in DEFAULT_IDM_PARAMS.items():
@@ -1107,6 +1436,8 @@ def main(): # Обернем основной код в функцию main()
         verbose=False # Можно установить в True для детального лога поиска равновесий
     )
     if data_sweep_T_fixed_Q and len(data_sweep_T_fixed_Q['param_values']) > 0:
+        # Здесь нужно вызвать plot_stability_for_parameter_sweep **ПЕРЕД** циклом симуляций,
+        # чтобы увидеть теоретический график ДО добавления точек симуляций
         plot_stability_for_parameter_sweep(
             data_sweep_T_fixed_Q, 
             swept_param_key='T_safe_time_headway',
@@ -1119,6 +1450,7 @@ def main(): # Обернем основной код в функцию main()
         if args.run_sumo_simulations:
             print("\\n--- Запуск SUMO симуляций через run_circle_simulation.py (Пример 5) ---")
             
+            simulation_results_list = [] # Список для сбора результатов симуляций
             sim_params_base = params.copy() 
             vehicle_length_for_calc = sim_params_base['l_vehicle_length']
             
@@ -1166,15 +1498,24 @@ def main(): # Обернем основной код в функцию main()
                     "--sumo-binary", args.sumo_binary,
                     "--sumo-tools-dir", args.sumo_tools_dir,
                     "--output-dir", current_run_output_dir # Передаем уникальную директорию для этого запуска
+                    # Добавляем параметры IDM для симуляции
+                    #"--idm-params", json.dumps({'T_safe_time_headway': current_T}) # Пока run_circle_simulation.py не поддерживает это
                 ]
+                
+                # Временно: Обновляем IDM параметры в base_params для текущей симуляции
+                # Если бы run_circle_simulation.py поддерживал --idm-params, это было бы лучше
+                # Этот подход менее надежен, т.к. предполагается, что run_circle_simulation 
+                # не читает IDM из .sumocfg напрямую (что он сейчас и делает).
+                # Правильнее было бы передать параметры IDM в run_circle_simulation.py
+                # Но для теста, оставим как есть, пока run_circle_simulation.py не модифицирован.
                 
                 print(f"Команда запуска симуляции: {' '.join(cmd_run_sim)}")
                 sim_success = False
                 try:
                     # Запускаем и ждем завершения
                     # stdout и stderr будут напечатаны run_circle_simulation.py
-                    # Изменено: check=False, добавлен errors='replace'
-                    completed_process_sim = subprocess.run(cmd_run_sim, capture_output=True, text=True, encoding='utf-8', errors='replace')
+                    # Изменено: check=False, добавлен errors='ignore'
+                    completed_process_sim = subprocess.run(cmd_run_sim, capture_output=True, text=True, errors='ignore')
                     
                     # Печатаем вывод всегда, чтобы видеть, что произошло
                     print("STDOUT (run_circle_simulation.py):")
@@ -1253,11 +1594,12 @@ def main(): # Обернем основной код в функцию main()
                         
                         cmd_analyze_data = [
                             "python", "src/analyze_circle_data.py",
-                            "--file", csv_file_to_analyze
+                            "--file", csv_file_to_analyze,
+                            "--length", str(FIXED_RING_LENGTH) # Передаем длину кольца
                         ]
                         print(f"Команда запуска анализа: {' '.join(cmd_analyze_data)}")
                         try:
-                            completed_process_analyze = subprocess.run(cmd_analyze_data, check=True, capture_output=True, text=True, encoding='utf-8')
+                            completed_process_analyze = subprocess.run(cmd_analyze_data, check=False, capture_output=True, text=True, errors='ignore') # check=False
                             print("STDOUT (analyze_circle_data.py):")
                             print(completed_process_analyze.stdout)
                             if completed_process_analyze.stderr:
@@ -1266,6 +1608,52 @@ def main(): # Обернем основной код в функцию main()
 
                             if completed_process_analyze.returncode == 0:
                                 print(f"Анализ данных для T={current_T:.3f} успешно завершен.")
+
+                                # --- Чтение analysis_summary.json --- 
+                                analysis_dir_path = None
+                                # Ищем директорию analysis_* внутри actual_data_dir
+                                if actual_data_dir and os.path.isdir(actual_data_dir):
+                                    analysis_subdirs = [d for d in os.listdir(actual_data_dir) if d.startswith("analysis_") and os.path.isdir(os.path.join(actual_data_dir, d))]
+                                    if len(analysis_subdirs) == 1:
+                                        analysis_dir_path = os.path.join(actual_data_dir, analysis_subdirs[0])
+                                    elif len(analysis_subdirs) > 1:
+                                         print(f"Предупреждение: Найдено несколько директорий анализа в {actual_data_dir}. Используется последняя: {analysis_subdirs[-1]}")
+                                         analysis_dir_path = os.path.join(actual_data_dir, analysis_subdirs[-1])
+                                    else:
+                                        print(f"Предупреждение: Директория анализа не найдена в {actual_data_dir}.")
+                                
+                                summary_file_path = None
+                                if analysis_dir_path:
+                                    potential_summary_file = os.path.join(analysis_dir_path, 'analysis_summary.json')
+                                    if os.path.isfile(potential_summary_file):
+                                        summary_file_path = potential_summary_file
+                                    else:
+                                        print(f"Предупреждение: Файл {potential_summary_file} не найден.")
+
+                                if summary_file_path:
+                                    try:
+                                        # Добавлена проверка на существование и размер файла
+                                        if os.path.getsize(summary_file_path) > 0:
+                                            with open(summary_file_path, 'r', encoding='utf-8') as f_summary:
+                                                analysis_summary = json.load(f_summary)
+                                            waves_obs = analysis_summary.get('waves_observed')
+                                            std_dev = analysis_summary.get('mean_speed_std_dev')
+                                            if waves_obs is not None:
+                                                print(f"Результат анализа симуляции: waves_observed={waves_obs} (std_dev={std_dev:.4f})")
+                                                simulation_results_list.append({
+                                                    'T': current_T,
+                                                    'v_star': current_v_e,
+                                                    's_star_net': current_s_e_net,
+                                                    'waves_observed': waves_obs
+                                                })
+                                            else:
+                                                print("Предупреждение: 'waves_observed' не найдено в analysis_summary.json")
+                                        
+                                    except json.JSONDecodeError:
+                                        print(f"Ошибка: Не удалось декодировать JSON из {summary_file_path}")
+                                    except Exception as e:
+                                        print(f"Ошибка при чтении/обработке {summary_file_path}: {e}")
+                                # --- Конец чтения analysis_summary.json ---
                             else:
                                 print(f"Ошибка при выполнении анализа данных для T={current_T:.3f} (код {completed_process_analyze.returncode}).")
 
@@ -1279,20 +1667,31 @@ def main(): # Обернем основной код в функцию main()
                             print(e.stderr)
                         except Exception as e:
                             print(f"Непредвиденная ошибка при запуске анализа для T={current_T:.3f}: {e}")
-                    # Убрано дублирование сообщения о пропуске, т.к. оно теперь выше
-                    # elif len(csv_files_found) > 1:
-                    #     print(f"ПРЕДУПРЕЖДЕНИЕ: Найдено несколько CSV файлов в {current_run_output_dir}. Пропуск анализа.")
-                    # else:
-                    #     print(f"ПРЕДУПРЕЖДЕНИЕ: CSV файл не найден в {current_run_output_dir}. Пропуск анализа.")
+                    else: # Если csv_file_to_analyze не найден
+                       print(f"Пропуск анализа для T={current_T:.3f}, так как CSV файл не найден.") 
             
             if num_processed_states == 0:
                  print("Не найдено валидных равновесных состояний для запуска SUMO симуляций в 'Примере 5' через run_circle_simulation.py.")
+
+            # --- Перерисовываем график с результатами симуляций --- 
+            if simulation_results_list:
+                print("\\n--- Перерисовка графика T vs Q с результатами симуляций ---")
+                plot_stability_for_parameter_sweep(
+                    data_sweep_T_fixed_Q, 
+                    swept_param_key='T_safe_time_headway',
+                    swept_param_label='Время реакции T (с)', 
+                    fixed_condition_label=f"Q = {target_Q_veh_per_hour:.0f} авто/час ({target_Q_veh_per_sec:.3f} авто/с)",
+                    base_params=params.copy(),
+                    simulation_results=simulation_results_list # Передаем собранные результаты
+                )
+            else:
+                print("Не удалось собрать результаты симуляций для добавления на график.")
 
         # <<< Конец добавленного блока для запуска SUMO симуляций >>>
     else:
         print(f"Не удалось собрать данные для варьирования T при Q={target_Q_veh_per_hour:.0f} авто/час.")
 
-    print("\nАнализ завершен.")
+    print("\\nАнализ завершен.") 
 
 
 if __name__ == "__main__":

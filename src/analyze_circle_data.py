@@ -4,8 +4,108 @@ import matplotlib.pyplot as plt
 import numpy as np
 import argparse
 from datetime import datetime
+import json
+from scipy.fft import fft, fftfreq
+import matplotlib.colors as mcolors
 
-def analyze_circle_data(data_file):
+def plot_spacetime_heatmap(df, output_dir, L=None):
+    """Строит x-t тепловую карту скорости."""
+    if 'time' not in df.columns or 'distance' not in df.columns or 'speed' not in df.columns or 'vehicle_id' not in df.columns:
+        print("Предупреждение: Недостаточно данных для построения x-t тепловой карты.")
+        return
+
+    # Если длина кольца L не задана, пытаемся оценить по максимальному расстоянию
+    if L is None:
+        L = df['distance'].max()
+        if L == 0: L = 600 # Запасной вариант, если расстояние не посчитано
+
+    # Для кольца используем остаток от деления на L
+    df['position_on_ring'] = df['distance'] % L
+
+    # Создаем сетку для интерполяции или используем pcolormesh
+    # pcolormesh может быть проще, но требует монотонных осей
+    # Попробуем сгруппировать и усреднить в бинах
+    time_bins = np.linspace(df['time'].min(), df['time'].max(), 100)
+    position_bins = np.linspace(0, L, 100)
+
+    df['time_bin'] = pd.cut(df['time'], bins=time_bins, labels=False, include_lowest=True)
+    df['position_bin'] = pd.cut(df['position_on_ring'], bins=position_bins, labels=False, include_lowest=True)
+
+    heatmap_data = df.groupby(['time_bin', 'position_bin'])['speed'].mean().unstack()
+
+    # Если есть пропуски (NaN), можно их заполнить средним или интерполировать,
+    # но для начала просто отобразим как есть
+    # heatmap_data = heatmap_data.fillna(df['speed'].mean())
+
+    plt.figure(figsize=(12, 8))
+    # Используем центры бинов для осей
+    time_centers = (time_bins[:-1] + time_bins[1:]) / 2
+    position_centers = (position_bins[:-1] + position_bins[1:]) / 2
+    
+    # Выбираем цветовую карту (например, 'viridis', 'plasma', 'inferno', 'magma', 'cividis', 'coolwarm')
+    cmap = plt.get_cmap('inferno') 
+    
+    pcm = plt.pcolormesh(time_centers, position_centers, heatmap_data.T, shading='auto', cmap=cmap, vmin=df['speed'].min(), vmax=df['speed'].max())
+    plt.colorbar(pcm, label='Скорость (м/с)')
+    plt.xlabel('Время (с)')
+    plt.ylabel('Положение на кольце (м)')
+    plt.title('x-t Тепловая карта скорости')
+    plt.savefig(os.path.join(output_dir, 'spacetime_heatmap.png'))
+    plt.close()
+
+def plot_fft_analysis(df, output_dir):
+    """Выполняет FFT анализ средней скорости и строит график."""
+    if 'time' not in df.columns or 'speed' not in df.columns:
+        print("Предупреждение: Недостаточно данных для FFT анализа.")
+        return
+
+    # Рассчитываем среднюю скорость в каждый момент времени
+    mean_speed_over_time = df.groupby('time')['speed'].mean()
+    
+    if len(mean_speed_over_time) < 2:
+        print("Предупреждение: Недостаточно временных точек для FFT анализа.")
+        return
+
+    times = mean_speed_over_time.index.values
+    speeds = mean_speed_over_time.values
+
+    # Убираем постоянную составляющую (среднее значение)
+    signal = speeds - np.mean(speeds)
+    
+    N = len(signal)
+    # Предполагаем равномерный шаг по времени, берем средний
+    T_sampling = np.mean(np.diff(times)) 
+    if T_sampling <= 0 or np.isnan(T_sampling):
+         print("Предупреждение: Не удалось определить шаг дискретизации для FFT.")
+         return
+
+    # Вычисляем FFT
+    yf = fft(signal)
+    xf = fftfreq(N, T_sampling)[:N//2] # Берем только положительные частоты
+
+    amplitude = 2.0/N * np.abs(yf[0:N//2])
+
+    plt.figure(figsize=(12, 6))
+    plt.plot(xf, amplitude)
+    plt.title('Амплитудный спектр Фурье средней скорости (исключая DC)')
+    plt.xlabel('Частота (Гц)')
+    plt.ylabel('Амплитуда')
+    plt.grid(True)
+    plt.xlim(0, min(1.0, xf.max() if len(xf)>0 else 1.0)) # Ограничиваем частоту для наглядности
+    plt.savefig(os.path.join(output_dir, 'fft_mean_speed.png'))
+    plt.close()
+
+def save_analysis_summary(summary_data, output_dir):
+    """Сохраняет сводку анализа в JSON файл."""
+    summary_file = os.path.join(output_dir, 'analysis_summary.json')
+    try:
+        with open(summary_file, 'w', encoding='utf-8') as f:
+            json.dump(summary_data, f, ensure_ascii=False, indent=4)
+        print(f"Сводка анализа сохранена в: {summary_file}")
+    except Exception as e:
+        print(f"Ошибка при сохранении сводки анализа в {summary_file}: {e}")
+
+def analyze_circle_data(data_file, L=None):
     """Анализирует данные симуляции кругового движения из CSV файла и создает визуализации."""
     # Создаем директорию для результатов анализа, если её нет
     # Результаты анализа будут сохраняться в поддиректорию 'analysis' внутри директории с данными симуляции
@@ -78,6 +178,25 @@ def analyze_circle_data(data_file):
             df.loc[mask, 'distance'] = 0.0 # Одна точка - нулевое расстояние
 
     plots_dir = analysis_dir # Графики сохраняем в созданную директорию анализа
+
+    # --- Расчет метрик ---
+    mean_speed_std_dev = 0.0
+    waves_observed = False
+    if not df.empty and 'time' in df.columns and 'speed' in df.columns:
+        # Группируем по времени, считаем std скорости в каждый момент, затем усредняем эти std
+        std_dev_per_timestep = df.groupby('time')['speed'].std(ddof=0) # ddof=0 для std по популяции
+        mean_speed_std_dev = std_dev_per_timestep.mean() 
+        if np.isnan(mean_speed_std_dev): mean_speed_std_dev = 0.0 # Если всего 1 машина или 1 шаг времени
+        
+        # Эвристический порог для определения волн
+        wave_threshold = 0.5 # м/с
+        waves_observed = mean_speed_std_dev > wave_threshold
+        
+        print(f"Среднее стандартное отклонение скорости по времени: {mean_speed_std_dev:.4f} м/с")
+        print(f"Наличие волн (std dev > {wave_threshold}): {'Да' if waves_observed else 'Нет'}")
+    else:
+        print("Недостаточно данных для расчета стандартного отклонения скорости.")
+        
 
     # --- Графики, аналогичные analyze_straight_data.py --- 
 
@@ -275,18 +394,45 @@ def analyze_circle_data(data_file):
         else:
             print("Недостаточно машин для построения графика V(x) для выбранных машин.")
 
-    print(f"Анализ завершен. Графики сохранены в директории: {plots_dir}")
+    # --- Новые графики ---
+    print("Построение новых графиков...")
+    try:
+        plot_spacetime_heatmap(df.copy(), plots_dir, L=L) # Передаем L
+    except Exception as e:
+        print(f"Ошибка при построении x-t тепловой карты: {e}")
+    
+    try:
+        plot_fft_analysis(df.copy(), plots_dir)
+    except Exception as e:
+        print(f"Ошибка при построении FFT анализа: {e}")
+
+    # --- Сохранение сводки ---
+    summary_data = {
+        'csv_file': os.path.basename(data_file),
+        'num_vehicles': len(vehicles),
+        'mean_speed_std_dev': mean_speed_std_dev,
+        'waves_observed_threshold': wave_threshold,
+        # Преобразуем numpy.bool_ в стандартный bool для JSON
+        'waves_observed': bool(waves_observed),
+        'analysis_timestamp': datetime.now().isoformat()
+        # Дополнительные параметры (T, v_e, s_e_net, L) нужно будет добавить извне, 
+        # когда этот скрипт вызывается из другого скрипта, который их знает.
+    }
+    save_analysis_summary(summary_data, analysis_dir)
+
+    print(f"Анализ завершен. Результаты сохранены в директории: {plots_dir}")
 
 def main():
     parser = argparse.ArgumentParser(description='Анализ данных симуляции кругового движения.')
     parser.add_argument('--file', type=str, required=True, help='Путь к CSV файлу с данными для анализа.')
+    parser.add_argument('--length', type=float, default=None, help='(Опционально) Длина кольца L для расчета положения на кольце. Если не указано, используется максимальное пройденное расстояние.')
     args = parser.parse_args()
     
     if not os.path.exists(args.file):
         print(f"Ошибка: Файл {args.file} не найден.")
         return
     
-    analyze_circle_data(args.file)
+    analyze_circle_data(args.file, L=args.length)
 
 if __name__ == "__main__":
     main() 
