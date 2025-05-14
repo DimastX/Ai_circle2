@@ -20,6 +20,8 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+.supercode/
+.cursor/
 
 # Virtual Environment
 venv/

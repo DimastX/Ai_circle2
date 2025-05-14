@@ -105,7 +105,7 @@ def save_analysis_summary(summary_data, output_dir):
     except Exception as e:
         print(f"Ошибка при сохранении сводки анализа в {summary_file}: {e}")
 
-def analyze_circle_data(data_file, L=None):
+def analyze_circle_data(data_file, L=None, warmup_time=0.0):
     """Анализирует данные симуляции кругового движения из CSV файла и создает визуализации."""
     # Создаем директорию для результатов анализа, если её нет
     # Результаты анализа будут сохраняться в поддиректорию 'analysis' внутри директории с данными симуляции
@@ -140,9 +140,26 @@ def analyze_circle_data(data_file, L=None):
     cols_to_rename = {k: v for k, v in required_cols.items() if k in df.columns}
     df.rename(columns=cols_to_rename, inplace=True)
 
-    # Проверяем, что все необходимые колонки теперь существуют
-    if not all(col in df.columns for col in ['time', 'vehicle_id', 'x', 'y', 'speed']):
-        print("Ошибка: В CSV файле отсутствуют необходимые колонки (time, vehicle_id, x, y, speed) после переименования.")
+    # Проверяем, что все необходимые колонки теперь существуют (особенно 'time')
+    if 'time' not in df.columns:
+        print(f"Ошибка: Колонка 'time' (или 'timestep_time') отсутствует в CSV файле: {data_file}")
+        print(f"Доступные колонки: {df.columns.tolist()}")
+        return
+
+    # --- Фильтрация Warmup Time --- 
+    initial_rows = len(df)
+    if warmup_time > 0:
+        min_time = df['time'].min() # Теперь 'time' должна существовать
+        df = df[df['time'] >= (min_time + warmup_time)].copy()
+        print(f"Отброшено {initial_rows - len(df)} строк данных за первые {warmup_time}с (warmup).")
+    if df.empty:
+        print("Ошибка: После отбрасывания warmup периода не осталось данных для анализа.")
+        return
+    # --- Конец Фильтрации ---
+
+    # Проверяем, что все остальные необходимые колонки существуют (после переименования и warmup)
+    if not all(col in df.columns for col in ['vehicle_id', 'x', 'y', 'speed']):
+        print("Ошибка: В CSV файле отсутствуют необходимые колонки (vehicle_id, x, y, speed) после переименования и warmup.")
         print(f"Доступные колонки: {df.columns.tolist()}")
         return
         
@@ -197,6 +214,9 @@ def analyze_circle_data(data_file, L=None):
     else:
         print("Недостаточно данных для расчета стандартного отклонения скорости.")
         
+    # --- Рассчитываем lambda_exp --- 
+    # Удаляем вызов lambda_exp_value = calculate_lambda_exp_std_method(df, plots_dir)
+    # --- Конец расчета lambda_exp ---
 
     # --- Графики, аналогичные analyze_straight_data.py --- 
 
@@ -408,8 +428,8 @@ def analyze_circle_data(data_file, L=None):
 
     # --- Сохранение сводки ---
     summary_data = {
-        'csv_file': os.path.basename(data_file),
-        'num_vehicles': len(vehicles),
+        'data_file': os.path.basename(data_file),
+        'ring_length_used': L if L is not None else df['distance'].max(), # Используемая длина кольца
         'mean_speed_std_dev': mean_speed_std_dev,
         'waves_observed_threshold': wave_threshold,
         # Преобразуем numpy.bool_ в стандартный bool для JSON
@@ -423,16 +443,17 @@ def analyze_circle_data(data_file, L=None):
     print(f"Анализ завершен. Результаты сохранены в директории: {plots_dir}")
 
 def main():
-    parser = argparse.ArgumentParser(description='Анализ данных симуляции кругового движения.')
-    parser.add_argument('--file', type=str, required=True, help='Путь к CSV файлу с данными для анализа.')
-    parser.add_argument('--length', type=float, default=None, help='(Опционально) Длина кольца L для расчета положения на кольце. Если не указано, используется максимальное пройденное расстояние.')
+    parser = argparse.ArgumentParser(description='Анализ FCD данных для кольцевой трассы SUMO и создание графиков.')
+    parser.add_argument('--file', type=str, required=True, help='Путь к CSV файлу с FCD данными.')
+    parser.add_argument('--length', '-L', type=float, default=None, help='Длина кольцевой трассы (м). Если не задано, используется max(distance).')
+    parser.add_argument('--warmup-time', type=float, default=150.0, help='Время прогрева симуляции (с), которое нужно отбросить в начале.')
     args = parser.parse_args()
     
     if not os.path.exists(args.file):
         print(f"Ошибка: Файл {args.file} не найден.")
         return
     
-    analyze_circle_data(args.file, L=args.length)
+    analyze_circle_data(args.file, L=args.length, warmup_time=args.warmup_time)
 
 if __name__ == "__main__":
     main() 

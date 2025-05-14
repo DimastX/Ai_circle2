@@ -5,18 +5,36 @@ import xml.etree.ElementTree as ET
 import tempfile
 import shutil
 
-def modify_routes_file(original_rou_file, temp_rou_file, num_vehicles):
-    """Копирует и изменяет файл маршрутов, устанавливая количество ТС."""
+def modify_routes_file(original_rou_file, temp_rou_file, num_vehicles, tau_value=None):
+    """Копирует и изменяет файл маршрутов, устанавливая количество ТС и опционально tau."""
     shutil.copyfile(original_rou_file, temp_rou_file)
     tree = ET.parse(temp_rou_file)
     root = tree.getroot()
+
+    # Изменение количества ТС
+    # Ищем flow элемент по ID '1', как в config/circles/input_routes.rou.xml
     flow_element = root.find(".//flow[@id='1']")
     if flow_element is not None:
         flow_element.set("number", str(num_vehicles))
-        tree.write(temp_rou_file)
-        print(f"Модифицирован файл маршрутов {temp_rou_file} для {num_vehicles} ТС.")
+        print(f"Модифицирован файл маршрутов {temp_rou_file} для {num_vehicles} ТС (найден flow[@id='1']).")
     else:
         raise ValueError("Элемент <flow id='1'> не найден в файле маршрутов.")
+
+    # Изменение tau для vType (если tau_value предоставлен)
+    if tau_value is not None:
+        # Ищем vType с id='custom', как в config/circles/input_routes.rou.xml
+        vtype_element = root.find(".//vType[@id='custom']")
+        if vtype_element is not None:
+            current_model = vtype_element.get("carFollowModel")
+            if current_model and "IDM" in current_model: # Проверяем, что используется IDM
+                vtype_element.set("tau", str(tau_value))
+                print(f"Параметр tau для vType 'custom' изменен на {tau_value} в {temp_rou_file}.")
+            else:
+                print(f"Предупреждение: vType 'custom' (модель: {current_model}) не использует IDM или атрибут carFollowModel отсутствует. Tau не изменен.")
+        else:
+            print(f"Предупреждение: Элемент <vType id='custom'> не найден в {temp_rou_file}. Tau не изменен.")
+    
+    tree.write(temp_rou_file)
 
 def modify_sumocfg_file(original_sumocfg_file_path, temp_sumocfg_file_dest, 
                           temp_rou_file_basename, num_vehicles, fcd_output_file_abs_path,
@@ -194,6 +212,8 @@ def main():
                         help="Название конфигурации круга (например, 600m, 1k, 10k).")
     parser.add_argument("--max-num-vehicles", type=int, required=True,
                         help="Максимальное количество транспортных средств.")
+    parser.add_argument("--tau", type=float, default=None,
+                        help="Значение параметра tau (T headway) для модели IDM. Если не указано, используется значение из файла.")
     parser.add_argument("--output-dir", type=str, default="results/circle_simulation",
                         help="Директория для сохранения результатов симуляции.")
     parser.add_argument("--sumo-binary", type=str, default="sumo",
@@ -255,9 +275,10 @@ def main():
         fcd_xml_output_file_abs_path = os.path.join(results_dir_with_timestamp_abs, fcd_xml_output_filename)
 
         # Передаем fcd_xml_output_file_abs_path в modify_sumocfg_file
-        modify_routes_file(original_rou_file_abs, temp_rou_file_abs, args.max_num_vehicles)
-        modify_sumocfg_file(original_sumocfg_file_abs, temp_sumocfg_file_abs, 
-                              temp_rou_filename, args.max_num_vehicles, 
+        # Передаем args.tau в modify_routes_file
+        modify_routes_file(original_rou_file_abs, temp_rou_file_abs, args.max_num_vehicles, args.tau)
+        modify_sumocfg_file(original_sumocfg_file_abs, temp_sumocfg_file_abs,
+                              temp_rou_filename, args.max_num_vehicles,
                               fcd_xml_output_file_abs_path, # Это путь к XML файлу, который SUMO должен создать
                               base_config_abs_path)
 
