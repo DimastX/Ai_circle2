@@ -134,8 +134,8 @@ def analyze_circle_data(data_file, L=None, warmup_time=0.0):
         'vehicle_x': 'x',
         'vehicle_y': 'y',
         'vehicle_speed': 'speed',
-        # 'vehicle_pos': 'lane_position', # Расстояние по полосе, может быть полезно
-        # 'vehicle_lane': 'lane_id'
+        'vehicle_pos': 'lane_position',
+        'vehicle_distance': 'odometer'  # Новая колонка для показаний одометра
     }
     cols_to_rename = {k: v for k, v in required_cols.items() if k in df.columns}
     df.rename(columns=cols_to_rename, inplace=True)
@@ -177,22 +177,32 @@ def analyze_circle_data(data_file, L=None, warmup_time=0.0):
         print(f"В файле {data_file} не найдено данных о машинах. Анализ невозможен.")
         return
 
-    for vehicle in vehicles:
-        mask = df['vehicle_id'] == vehicle
-        vehicle_data = df[mask]
-        if len(vehicle_data) > 1:
-            # Координаты должны быть отсортированы по времени, что мы сделали выше
-            x_coords = vehicle_data['x'].values
-            y_coords = vehicle_data['y'].values
-            
-            dx = np.diff(x_coords)
-            dy = np.diff(y_coords)
-            
-            distances = np.sqrt(dx**2 + dy**2)
-            cumulative_distance = np.concatenate(([0], np.cumsum(distances)))
-            df.loc[mask, 'distance'] = cumulative_distance
-        elif len(vehicle_data) == 1:
-            df.loc[mask, 'distance'] = 0.0 # Одна точка - нулевое расстояние
+    if 'vehicle_odometer' in df.columns:
+        print("Обнаружена колонка 'odometer' (из 'vehicle_distance'). Используется как 'distance'.")
+        df['distance'] = df['vehicle_odometer']
+        # Если требуется вычитание начального значения одометра для каждого автомобиля:
+        # print("Вычитание начального значения одометра для каждого автомобиля...")
+        # initial_odometers = df.loc[df.groupby('vehicle_id')['time'].idxmin()][['vehicle_id', 'odometer']].copy()
+        # initial_odometers.rename(columns={'odometer': 'initial_odometer'}, inplace=True)
+        # df = pd.merge(df, initial_odometers, on='vehicle_id', how='left')
+        # df['distance'] = df['odometer'] - df['initial_odometer']
+        # df.drop(columns=['initial_odometer'], inplace=True)
+        # Пока что используем прямое значение одометра. Если нужно вычитание начального - раскомментируйте выше.
+    else:
+        print("ПРЕДУПРЕЖДЕНИЕ: Колонка 'odometer' (из 'vehicle_distance') не найдена. \n         Расчет 'distance' будет основан на координатах x, y, как раньше.")
+        for vehicle in vehicles:
+            mask = df['vehicle_id'] == vehicle
+            vehicle_data = df[mask].sort_values(by='time')
+            if len(vehicle_data) > 1:
+                x_coords = vehicle_data['x'].values
+                y_coords = vehicle_data['y'].values
+                dx = np.diff(x_coords)
+                dy = np.diff(y_coords)
+                distances_step = np.sqrt(dx**2 + dy**2)
+                cumulative_distance = np.concatenate(([0], np.cumsum(distances_step)))
+                df.loc[vehicle_data.index, 'distance'] = cumulative_distance
+            elif len(vehicle_data) == 1:
+                df.loc[vehicle_data.index, 'distance'] = 0.0
 
     plots_dir = analysis_dir # Графики сохраняем в созданную директорию анализа
 
@@ -429,7 +439,7 @@ def analyze_circle_data(data_file, L=None, warmup_time=0.0):
     # --- Сохранение сводки ---
     summary_data = {
         'data_file': os.path.basename(data_file),
-        'ring_length_used': L if L is not None else df['distance'].max(), # Используемая длина кольца
+        'ring_length_used': L if L is not None else (df['distance'].max() if not df.empty and 'distance' in df.columns else 0),
         'mean_speed_std_dev': mean_speed_std_dev,
         'waves_observed_threshold': wave_threshold,
         # Преобразуем numpy.bool_ в стандартный bool для JSON

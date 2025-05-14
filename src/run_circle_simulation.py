@@ -106,12 +106,24 @@ def modify_sumocfg_file(original_sumocfg_file_path, temp_sumocfg_file_dest,
     fcd_output_element = output_element.find(".//fcd-output")
     if fcd_output_element is None:
         fcd_output_element = ET.SubElement(output_element, "fcd-output")
-    fcd_output_element.set("value", fcd_output_file_abs_path)
     
+    fcd_output_element.set("value", fcd_output_file_abs_path) # Устанавливаем имя файла
+    fcd_output_element.set("distance", "true") # Явно запрашиваем вывод "distance" (одометра)
+
+    fcd_odometer_element = fcd_output_element.find(".//fcd-output.attributes")
+    if fcd_odometer_element is None:
+        fcd_odometer_element = ET.SubElement(fcd_output_element, "fcd-output.attributes")
+    fcd_odometer_element.set("value", "odometer,speed,x,y")
+    # Убедимся, что другие атрибуты не удаляются и не перезаписываются, если они были
+    # Например, если fcd_output_element уже существовал с какими-то атрибутами, 
+    # мы просто добавляем/обновляем value и distance.
+
+    # 3. Настраиваем fcd-output.geo (если нужно)
     fcd_geo_element = output_element.find(".//fcd-output.geo")
     if fcd_geo_element is None:
         fcd_geo_element = ET.SubElement(output_element, "fcd-output.geo")
     fcd_geo_element.set("value", "true")
+    # --- Конец изменений для FCD вывода ---
 
     # Устанавливаем время окончания симуляции
     time_element = root.find(".//time")

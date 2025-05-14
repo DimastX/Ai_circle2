@@ -1233,7 +1233,6 @@ def collect_data_for_param_sweep(
         'lambda_max_theory': np.array(lambda_max_theory_list) # Добавлено
     }
 
-def plot_stability_for_parameter_sweep(data, swept_param_key, swept_param_label, fixed_condition_label, base_params, simulation_results=None):
     """
     Строит графики результатов параметрического анализа устойчивости IDM,
     показывая влияние одного варьируемого параметра на равновесные состояния и их устойчивость.
@@ -1298,6 +1297,7 @@ def plot_stability_for_parameter_sweep(data, swept_param_key, swept_param_label,
                                                   и 'waves_observed' (bool).
                                                   Defaults to None.
     """
+def plot_stability_for_parameter_sweep(data, swept_param_key, swept_param_label, fixed_condition_label, base_params, simulation_results=None):
     if len(data['param_values']) == 0:
         print(f"Нет данных для построения графиков для параметра {swept_param_label}.")
         return
@@ -1514,7 +1514,7 @@ def main(): # Обернем основной код в функцию main()
     default_sumo_exe_path = "sumo-gui.exe" 
     if "SUMO_HOME" in os.environ:
         # Сначала ищем sumo-gui.exe
-        potential_gui_path = os.path.join(os.getenv("SUMO_HOME"), "bin", "sumo.exe")
+        potential_gui_path = os.path.join(os.getenv("SUMO_HOME"), "bin", "sumo-gui.exe")
         if os.path.isfile(potential_gui_path):
             default_sumo_exe_path = potential_gui_path
         else:
