@@ -134,8 +134,10 @@ def analyze_circle_data(data_file, L=None, warmup_time=0.0):
         'vehicle_x': 'x',
         'vehicle_y': 'y',
         'vehicle_speed': 'speed',
-        'vehicle_pos': 'lane_position',
-        'vehicle_distance': 'odometer'  # Новая колонка для показаний одометра
+        'vehicle_pos': 'lane_position',    # из FCD атрибута 'pos'
+        'vehicle_odometer': 'odometer'     # из FCD атрибута 'odometer'
+        # Если SUMO все еще выводит 'distance' как одометр, а не 'odometer',
+        # то нужно будет использовать 'vehicle_distance': 'odometer'
     }
     cols_to_rename = {k: v for k, v in required_cols.items() if k in df.columns}
     df.rename(columns=cols_to_rename, inplace=True)
@@ -177,19 +179,13 @@ def analyze_circle_data(data_file, L=None, warmup_time=0.0):
         print(f"В файле {data_file} не найдено данных о машинах. Анализ невозможен.")
         return
 
-    if 'vehicle_odometer' in df.columns:
-        print("Обнаружена колонка 'odometer' (из 'vehicle_distance'). Используется как 'distance'.")
-        df['distance'] = df['vehicle_odometer']
-        # Если требуется вычитание начального значения одометра для каждого автомобиля:
-        # print("Вычитание начального значения одометра для каждого автомобиля...")
-        # initial_odometers = df.loc[df.groupby('vehicle_id')['time'].idxmin()][['vehicle_id', 'odometer']].copy()
-        # initial_odometers.rename(columns={'odometer': 'initial_odometer'}, inplace=True)
-        # df = pd.merge(df, initial_odometers, on='vehicle_id', how='left')
-        # df['distance'] = df['odometer'] - df['initial_odometer']
-        # df.drop(columns=['initial_odometer'], inplace=True)
-        # Пока что используем прямое значение одометра. Если нужно вычитание начального - раскомментируйте выше.
+    if 'odometer' in df.columns:
+        print("Обнаружена колонка 'odometer'. Используется как 'distance'.")
+        df['distance'] = df['odometer'].astype(float) # Убедимся, что это float для арифм. операций
     else:
-        print("ПРЕДУПРЕЖДЕНИЕ: Колонка 'odometer' (из 'vehicle_distance') не найдена. \n         Расчет 'distance' будет основан на координатах x, y, как раньше.")
+        print("ПРЕДУПРЕЖДЕНИЕ: Колонка 'odometer' не найдена. \n"
+              "         Расчет 'distance' будет основан на координатах x, y, как раньше.")
+        # Убираем df['distance'] = 0.0 отсюда, т.к. ниже он будет создан для каждого авто
         for vehicle in vehicles:
             mask = df['vehicle_id'] == vehicle
             vehicle_data = df[mask].sort_values(by='time')
@@ -203,6 +199,55 @@ def analyze_circle_data(data_file, L=None, warmup_time=0.0):
                 df.loc[vehicle_data.index, 'distance'] = cumulative_distance
             elif len(vehicle_data) == 1:
                 df.loc[vehicle_data.index, 'distance'] = 0.0
+            else: # Если vehicle_data пуст для какого-то ID (не должно быть, если vehicles из df['vehicle_id'].unique())
+                pass # или df.loc[mask, 'distance'] = 0.0, но mask будет для пустого набора
+
+    # Применяем коррекцию 'distance' на основе начального 'lane_position'
+    if 'lane_position' in df.columns and 'distance' in df.columns:
+        print("Применение корректировки 'distance' на основе 'lane_position'.")
+        for vehicle_id_to_adjust in vehicles: # vehicles - это df['vehicle_id'].unique()
+            # Создаем маску для текущего автомобиля в оригинальном DataFrame df
+            vehicle_mask_in_df = (df['vehicle_id'] == vehicle_id_to_adjust)
+            
+            # Получаем данные только для текущего автомобиля и сортируем их по времени
+            # Это важно для корректного выбора .iloc[0]
+            vehicle_specific_data_sorted = df[vehicle_mask_in_df].sort_values(by='time')
+
+            if vehicle_specific_data_sorted.empty:
+                continue
+
+            pos_to_add = 0.0
+            adjustment_applied = False
+
+            # Убедимся, что vehicle_id_to_adjust сравнивается как строка, если это ID типа "1.0"
+            current_vehicle_id_str = str(vehicle_id_to_adjust)
+
+            if current_vehicle_id_str == '1.0':
+                # Для машины '1.0', используем lane_position с первого замера (time ~ 0)
+                first_record = vehicle_specific_data_sorted.iloc[0]
+                pos_value = first_record['lane_position']
+                pos_to_add = float(pos_value) if pd.notna(pos_value) else 0.0
+                adjustment_applied = True
+                print(f"Для машины {current_vehicle_id_str}: к 'distance' будет добавлен lane_position={pos_to_add:.2f} (с первого замера, time={first_record['time']:.2f}).")
+            else:
+                # Для других машин, используем lane_position с первого замера при time >= 1.0
+                records_at_or_after_time_1 = vehicle_specific_data_sorted[vehicle_specific_data_sorted['time'] >= 1.0]
+                if not records_at_or_after_time_1.empty:
+                    first_record_at_or_after_1 = records_at_or_after_time_1.iloc[0]
+                    pos_value = first_record_at_or_after_1['lane_position']
+                    pos_to_add = float(pos_value) if pd.notna(pos_value) else 0.0
+                    adjustment_applied = True
+                    print(f"Для машины {current_vehicle_id_str}: к 'distance' будет добавлен lane_position={pos_to_add:.2f} (с первого замера >= 1.0с, time={first_record_at_or_after_1['time']:.2f}).")
+                else:
+                    print(f"Для машины {current_vehicle_id_str}: не найдено данных для времени >= 1.0с. Коррекция 'distance' на основе 'lane_position' не применена.")
+
+            if adjustment_applied:
+                # Применяем коррекцию к колонке 'distance' в оригинальном DataFrame df для всех записей этого автомобиля
+                df.loc[vehicle_mask_in_df, 'distance'] = df.loc[vehicle_mask_in_df, 'distance'] + pos_to_add
+    elif 'distance' not in df.columns:
+         print("ПРЕДУПРЕЖДЕНИЕ: Колонка 'distance' не была создана. Коррекция невозможна.")
+    else: # lane_position not in df.columns
+        print("ПРЕДУПРЕЖДЕНИЕ: Колонка 'lane_position' не найдена. Коррекция 'distance' на основе 'lane_position' невозможна.")
 
     plots_dir = analysis_dir # Графики сохраняем в созданную директорию анализа
 

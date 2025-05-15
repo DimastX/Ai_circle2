@@ -1504,7 +1504,7 @@ def plot_stability_for_parameter_sweep(data, swept_param_key, swept_param_label,
     plt.tight_layout(rect=[0, 0, 1, 0.93])
     plt.show()
 
-FIXED_RING_LENGTH = 1000.0 # Длина кольца для 1k.net.xml
+FIXED_RING_LENGTH = 901.53 # Длина кольца для 1k.net.xml
 CONFIG_NAME_FOR_SUMO = "1k" # Имя конфигурации для run_circle_simulation.py
 
 def main(): # Обернем основной код в функцию main()

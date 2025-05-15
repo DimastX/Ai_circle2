@@ -113,7 +113,7 @@ def modify_sumocfg_file(original_sumocfg_file_path, temp_sumocfg_file_dest,
     fcd_odometer_element = fcd_output_element.find(".//fcd-output.attributes")
     if fcd_odometer_element is None:
         fcd_odometer_element = ET.SubElement(fcd_output_element, "fcd-output.attributes")
-    fcd_odometer_element.set("value", "odometer,speed,x,y")
+    fcd_odometer_element.set("value", "odometer,speed,x,y,pos")
     # Убедимся, что другие атрибуты не удаляются и не перезаписываются, если они были
     # Например, если fcd_output_element уже существовал с какими-то атрибутами, 
     # мы просто добавляем/обновляем value и distance.
