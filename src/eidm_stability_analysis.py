@@ -9,6 +9,8 @@ from datetime import datetime # Для генерации уникальных �
 import json # Добавлено для чтения JSON
 import cmath # Добавлено для комплексных чисел в lambda_max
 import pandas as pd # Добавлено для DataFrame и CSV
+from scipy.signal import correlate as scipy_correlate, find_peaks # Добавлено для кросс-корреляции и поиска пиков
+import csv # Добавлено для сохранения в CSV
 
 """
 Скрипт для анализа линейной устойчивости Интеллектуальной Модели Водителя (IDM).
@@ -152,6 +154,339 @@ def calculate_theoretical_lambda_max(f_s, f_dv, f_v, s_e_total, num_k_points=100
 
     return max_re_lambda
 # <<<<<< КОНЕЦ ДОБАВЛЕННОГО ОПРЕДЕЛЕНИЯ <<<<<<
+
+# >>>>>> ДОБАВЛЕНО ОПРЕДЕЛЕНИЕ ФУНКЦИИ detect_stop_and_go_waves >>>>>>
+def detect_stop_and_go_waves(cameras_coords, Ts, V_data, N_data, axes_vx, axes_vt, axes_heatmap, 
+                               Q_data=None, rho_data=None, # <--- НОВЫЕ НЕОБЯЗАТЕЛЬНЫЕ АРГУМЕНТЫ
+                               output_csv_path="stop_and_go_events.csv", 
+                               CORR_THRESH=0.5, MOVING_AVG_WINDOW=5, 
+                               MIN_SPEED_DROP_FACTOR=0.5, MIN_SPEED_FOR_DROP_DETECTION_FACTOR=0.7):
+    """
+    Анализирует данные с симулированных дорожных камер (детекторов) для обнаружения 
+    stop-and-go волн и отмечает их на предоставленных графиках.
+
+    Метод основан на вычислении взаимной корреляции сигналов скорости от пар
+    соседних детекторов и последующем определении характеристик волны.
+
+    **Процесс работы:**
+    1.  **Подготовка данных:**
+        *   Проверяются входные данные (`V_data`, `N_data`, `cameras_coords`).
+        *   Рассчитываются вспомогательные характеристики потока: интенсивность (`Q_data`)
+            и плотность (`rho_data`), если они не предоставлены как входные аргументы. 
+            Эти данные напрямую не используются в текущем алгоритме детектирования волн, 
+            но могут быть полезны для отладки или будущих расширений.
+
+    2.  **Итерация по парам камер:** Для каждой пары соседних камер (i, i+1):
+        *   **Фильтрация:** Временные ряды средних скоростей с обеих камер 
+            (`V_data[i,:]`, `V_data[i+1,:]`) сглаживаются с помощью скользящего 
+            среднего (`MOVING_AVG_WINDOW`).
+        *   **Взаимная корреляция:** Между отфильтрованными и центрированными 
+            (вычтено среднее) сигналами скоростей вычисляется нормированная 
+            взаимная корреляция `R(τ)`. Рассматриваются только положительные 
+            временные сдвиги `τ > 0`.
+        *   **Поиск пика корреляции:** Ищется максимальный пик `R_max` в `R(τ)`, 
+            превышающий порог `CORR_THRESH`. Если такой пик найден, 
+            соответствующий ему временной лаг `τ_max` (в шагах дискретизации) 
+            и значение `R_max` сохраняются.
+        *   **Расчет скорости волны (c):** 
+            `c = -(x_{i+1} - x_i) / (τ_max * Ts)`, где `x` - координаты камер, 
+            `Ts` - период дискретизации. Отрицательный знак указывает на волны, 
+            распространяющиеся против движения потока.
+        *   **Определение момента начала волны (t_event, x_event):**
+            *   `x_event`: Принимается равной координате первой камеры в паре (`cameras_coords[i]`).
+            *   `t_event`: Момент времени, когда на первой камере (`i`) происходит 
+                "резкое" падение скорости. Падение считается резким, если скорость, 
+                будучи выше `MIN_SPEED_FOR_DROP_DETECTION_FACTOR * mean_speed_on_cam_i`, 
+                падает ниже `MIN_SPEED_DROP_FACTOR * mean_speed_on_cam_i`. 
+                Берется первое такое событие на камере `i`.
+
+    3.  **Формирование списка событий:** Каждое обнаруженное событие (волна) 
+        сохраняется как словарь со следующими ключами (см. "Содержимое CSV файла").
+
+    4.  **Аннотация графиков:**
+        *   `axes_vx` (график v(x)): Вертикальная пунктирная линия фиолетового цвета 
+            в точке `x_event` для каждого обнаруженного фронта волны.
+        *   `axes_vt` (график v(t), обычно для первой камеры): Фиолетовый маркер 'X' 
+            в точке `(t_event, V_data[0, k_event_on_cam0])`, если волна 
+            инициирована на камере 0 (`cam_idx_1 == 0`).
+        *   `axes_heatmap` (пространственно-временная диаграмма V(x,t)):
+            *   Белый маркер 'x' в точке `(t_event, x_event)` для обозначения начала волны.
+            *   Белая пунктирная линия от `(t_event, x_event)` до 
+                `(t_event + dt_sync_s, cameras_coords[cam_idx_2])` для визуализации 
+                распространения фронта волны. `dt_sync_s` - это `τ_max * Ts`.
+
+    5.  **Сохранение результатов:** Список событий сохраняется в CSV файл.
+
+    **Содержимое CSV файла (`output_csv_path`):**
+    Каждая строка (кроме заголовка) содержит информацию об одной обнаруженной волне:
+    *   `x_event_m` (float): Координата начала события волны [м].
+    *   `t_event_s` (float): Время начала события волны [с].
+    *   `wave_speed_mps` (float): Скорость распространения волны [м/с].
+    *   `R_max_corr` (float): Максимальное значение нормированной кросс-корреляции.
+    *   `dx_m` (float): Расстояние между камерами в паре [м].
+    *   `dt_sync_s` (float): Временной лаг (`τ_max * Ts`) между камерами [с].
+    *   `cam_idx_1` (int): Индекс первой камеры в паре.
+    *   `cam_idx_2` (int): Индекс второй камеры в паре.
+
+    Args:
+        cameras_coords (list or np.array): Список или массив координат камер в метрах (x_i).
+        Ts (float): Период дискретизации в секундах.
+        V_data (np.array): Матрица numpy (num_cameras, num_timesteps) средних скоростей vbar_i[k] (м/с).
+        N_data (np.array): Матрица numpy (num_cameras, num_timesteps) числа проехавших машин N_i[k].
+        axes_vx (matplotlib.axes.Axes): Объект Axes для графика v(x) для аннотации.
+        axes_vt (matplotlib.axes.Axes): Объект Axes для графика v(t) (обычно для первой камеры) для аннотации.
+        axes_heatmap (matplotlib.axes.Axes): Объект Axes для spatio-temporal heatmap V(x,t) для аннотации.
+        Q_data (np.array, optional): Матрица numpy (num_cameras, num_timesteps) интенсивности Q_i[k] (ТС/с).
+                                     Если None, рассчитывается из N_data и Ts.
+        rho_data (np.array, optional): Матрица numpy (num_cameras, num_timesteps) плотности rho_i[k] (ТС/м).
+                                       Если None, рассчитывается из Q_data и V_data.
+        output_csv_path (str, optional): Путь для сохранения CSV файла с событиями.
+                                         Defaults to "stop_and_go_events.csv".
+        CORR_THRESH (float, optional): Порог для нормализованной кросс-корреляции R_max. 
+                                       Событие считается волной, если R_max > CORR_THRESH.
+                                       Defaults to 0.5.
+        MOVING_AVG_WINDOW (int, optional): Размер окна (в шагах дискретизации) для 
+                                           скользящего среднего при фильтрации сигналов скорости.
+                                           Defaults to 5.
+        MIN_SPEED_DROP_FACTOR (float, optional): Фактор для определения "резкого" падения скорости.
+                                                Падение фиксируется, если скорость падает ниже 
+                                                `MIN_SPEED_DROP_FACTOR * средняя_скорость_на_камере_i`.
+                                                Defaults to 0.5.
+        MIN_SPEED_FOR_DROP_DETECTION_FACTOR (float, optional): Фактор для определения "высокой" 
+                                                               скорости перед падением. Падение 
+                                                               детектируется, только если перед ним 
+                                                               скорость была выше 
+                                                               `MIN_SPEED_FOR_DROP_DETECTION_FACTOR * средняя_скорость_на_камере_i`.
+                                                               Defaults to 0.7.
+
+    Returns:
+        list: Список словарей, где каждый словарь представляет обнаруженное событие волны.
+              Каждый словарь содержит ключи: 'x_event_m', 't_event_s', 'wave_speed_mps', 
+              'R_max_corr', 'dx_m', 'dt_sync_s', 'cam_idx_1', 'cam_idx_2'.
+              Возвращает пустой список, если событий не найдено или произошла ошибка.
+    """
+    # 0. Проверка входных данных и инициализация
+    if V_data is None or N_data is None or cameras_coords is None or Ts is None:
+        print("Ошибка: V_data, N_data, cameras_coords или Ts не предоставлены.")
+        return []
+    if V_data.shape != N_data.shape:
+        print(f"Ошибка: V_data (shape {V_data.shape}) и N_data (shape {N_data.shape}) должны иметь одинаковый размер.")
+        return []
+    if V_data.shape[0] != len(cameras_coords):
+        print(f"Ошибка: Количество камер в V_data ({V_data.shape[0]}) не совпадает с len(cameras_coords) ({len(cameras_coords)}).")
+        return []
+    if V_data.ndim != 2 or V_data.shape[0] == 0 or V_data.shape[1] == 0:
+        print(f"Ошибка: V_data должен быть 2D массивом с num_cameras > 0 и num_timesteps > 0. Получено shape: {V_data.shape}")
+        return []
+
+    num_cameras, num_timesteps = V_data.shape
+    events = []
+
+    # 1. Расчет Q и rho, если они не предоставлены
+    if Q_data is None:
+        if Ts > 1e-9:
+            Q_data_calc = N_data / Ts
+        else:
+            Q_data_calc = np.zeros_like(N_data, dtype=float)
+        print("Q_data не предоставлен, рассчитывается из N_data и Ts.")
+    else:
+        if Q_data.shape != V_data.shape:
+            print(f"Предупреждение: Предоставленный Q_data (shape {Q_data.shape}) имеет неверный размер, ожидался {V_data.shape}. Q будет пересчитан.")
+            if Ts > 1e-9: Q_data_calc = N_data / Ts
+            else: Q_data_calc = np.zeros_like(N_data, dtype=float)
+        else:
+            Q_data_calc = Q_data
+            print("Используется предоставленный Q_data.")
+
+    if rho_data is None:
+        # rho = Q / V. Обработка деления на ноль или околонулевую скорость.
+        rho_data_calc = np.zeros_like(Q_data_calc, dtype=float)
+        # Где V > epsilon, rho = Q/V. Где V близко к 0, а Q > 0, rho -> inf (ставим nan).
+        # Где и V, и Q близки к 0, rho = 0.
+        mask_v_nonzero = np.abs(V_data) > 1e-3
+        rho_data_calc[mask_v_nonzero] = Q_data_calc[mask_v_nonzero] / V_data[mask_v_nonzero]
+        
+        mask_v_zero_q_nonzero = (~mask_v_nonzero) & (np.abs(Q_data_calc) > 1e-3)
+        rho_data_calc[mask_v_zero_q_nonzero] = np.nan 
+        print("rho_data не предоставлен, рассчитывается из Q_data и V_data.")
+    else:
+        if rho_data.shape != V_data.shape:
+            print(f"Предупреждение: Предоставленный rho_data (shape {rho_data.shape}) имеет неверный размер, ожидался {V_data.shape}. Rho будет пересчитан.")
+            rho_data_calc = np.zeros_like(Q_data_calc, dtype=float)
+            mask_v_nonzero = np.abs(V_data) > 1e-3
+            rho_data_calc[mask_v_nonzero] = Q_data_calc[mask_v_nonzero] / V_data[mask_v_nonzero]
+            mask_v_zero_q_nonzero = (~mask_v_nonzero) & (np.abs(Q_data_calc) > 1e-3)
+            rho_data_calc[mask_v_zero_q_nonzero] = np.nan
+        else:
+            rho_data_calc = rho_data
+            print("Используется предоставленный rho_data.")
+
+    # Переменные Q_data и rho_data далее в функции не используются напрямую для детектирования,
+    # но они посчитаны и доступны, если понадобятся.
+    # Для удобства можно было бы их просто назвать Q_data, rho_data внутри функции,
+    # но _calc подчеркивает, что они могли быть вычислены здесь.
+
+    # ... (остальная часть функции detect_stop_and_go_waves без изменений, 
+    # она использует V_data для основного анализа)
+
+    for i in range(num_cameras - 1):
+        x_i = cameras_coords[i]
+        x_i_plus_1 = cameras_coords[i+1]
+        delta_x = x_i_plus_1 - x_i
+        if abs(delta_x) < 1e-3:
+            continue
+
+        vbar_i_raw = V_data[i, :]
+        vbar_i_plus_1_raw = V_data[i+1, :]
+
+        vbar_i_filt = pd.Series(vbar_i_raw).rolling(window=MOVING_AVG_WINDOW, center=True, min_periods=1).mean().to_numpy()
+        vbar_i_plus_1_filt = pd.Series(vbar_i_plus_1_raw).rolling(window=MOVING_AVG_WINDOW, center=True, min_periods=1).mean().to_numpy()
+        
+        valid_indices = ~np.isnan(vbar_i_filt) & ~np.isnan(vbar_i_plus_1_filt)
+        if np.sum(valid_indices) < MOVING_AVG_WINDOW * 2: 
+            continue
+            
+        v1 = vbar_i_filt[valid_indices]
+        v2 = vbar_i_plus_1_filt[valid_indices]
+
+        v1_centered = v1 - np.mean(v1)
+        v2_centered = v2 - np.mean(v2)
+        
+        correlation = scipy_correlate(v1_centered, v2_centered, mode='full')
+        
+        norm_factor = np.sqrt(np.sum(v1_centered**2) * np.sum(v2_centered**2))
+        if norm_factor < 1e-9: 
+            normalized_correlation = np.zeros_like(correlation)
+        else:
+            normalized_correlation = correlation / norm_factor
+        
+        len_v = len(v1)
+        lags = np.arange(-(len_v - 1), len_v)
+
+        positive_lags_indices = np.where(lags > 0)[0]
+        if len(positive_lags_indices) == 0:
+            continue
+
+        R_positive_lags = normalized_correlation[positive_lags_indices]
+        peaks_indices, properties = find_peaks(R_positive_lags, height=CORR_THRESH)
+
+        if len(peaks_indices) == 0:
+            continue
+
+        idx_of_max_peak_in_R_positive = peaks_indices[np.argmax(properties['peak_heights'])]
+        R_max_val = properties['peak_heights'][np.argmax(properties['peak_heights'])]
+        tau_max_steps = lags[positive_lags_indices[idx_of_max_peak_in_R_positive]]
+        
+        tau_max_time = tau_max_steps * Ts
+        if abs(tau_max_time) < 1e-9:
+            wave_speed = float('inf') if delta_x != 0 else float('nan')
+        else:
+            wave_speed = -delta_x / tau_max_time
+
+        mean_speed_on_cam_i = np.mean(vbar_i_filt[~np.isnan(vbar_i_filt)])
+        if np.isnan(mean_speed_on_cam_i): continue
+
+        speed_threshold_low = MIN_SPEED_DROP_FACTOR * mean_speed_on_cam_i
+        speed_threshold_high = MIN_SPEED_FOR_DROP_DETECTION_FACTOR * mean_speed_on_cam_i
+
+        potential_k_peaks = []
+        was_above_high = False
+        for k_step in range(len(vbar_i_filt)):
+            if np.isnan(vbar_i_filt[k_step]): continue
+            if was_above_high and vbar_i_filt[k_step] < speed_threshold_low:
+                potential_k_peaks.append(k_step) 
+                was_above_high = False 
+            if vbar_i_filt[k_step] > speed_threshold_high:
+                was_above_high = True
+            elif vbar_i_filt[k_step] < speed_threshold_low :
+                was_above_high = False
+
+        if not potential_k_peaks:
+            continue
+        
+        k_peak = potential_k_peaks[0]
+        t_event = k_peak * Ts 
+        x_event = x_i
+
+        event_data = {
+            'x_event_m': x_event,
+            't_event_s': t_event,
+            'wave_speed_mps': wave_speed,
+            'R_max_corr': R_max_val,
+            'dx_m': delta_x,
+            'dt_sync_s': tau_max_time,
+            'cam_idx_1': i,
+            'cam_idx_2': i + 1
+        }
+        events.append(event_data)
+        
+    added_label_vx = False
+    added_label_vt = False
+    added_label_heatmap = False
+
+    for event in events:
+        xe = event['x_event_m']
+        te = event['t_event_s']
+        cam_idx_1 = event['cam_idx_1']
+        cam_idx_2 = event['cam_idx_2']
+        dt_sync_s = event['dt_sync_s']
+        
+        if axes_vx:
+            label_vx = "Stop-and-Go Wave Front (x)" if not added_label_vx else None
+            axes_vx.axvline(x=xe, color='purple', linestyle='--', alpha=0.7, label=label_vx)
+            added_label_vx = True
+
+        # Аннотируем график v(t) (для камеры 0) только если волна началась на камере 0
+        if axes_vt and cam_idx_1 == 0:
+            k_event_on_cam0 = int(round(te / Ts))
+            if 0 <= k_event_on_cam0 < num_timesteps:
+                v_at_cam0_at_te = V_data[0, k_event_on_cam0]
+                if not np.isnan(v_at_cam0_at_te):
+                    label_vt = "Wave Arrival @ Cam0" if not added_label_vt else None
+                    axes_vt.plot(te, v_at_cam0_at_te, marker='X', color='purple', markersize=8, alpha=0.7, label=label_vt)
+                    # Обновляем маркер, чтобы следующая легенда для этого типа события не дублировалась
+                    # Это необходимо, если несколько волн начинаются на камере 0
+                    if label_vt: added_label_vt = True 
+        
+        if axes_heatmap:
+            label_hm_marker = "Wave Start (t,x)" if not added_label_heatmap else None
+            axes_heatmap.plot(te, xe, 'wx', markersize=7, markeredgewidth=1.5, alpha=0.9, label=label_hm_marker)
+            
+            # Рисуем линию распространения волны
+            x_end_wave = cameras_coords[cam_idx_2]
+            t_end_wave = te + dt_sync_s
+            label_hm_line = "Wave Propagation" if not added_label_heatmap and not label_hm_marker else None # Легенда для линии, если еще не было
+            axes_heatmap.plot([te, t_end_wave], [xe, x_end_wave], color='white', linestyle='--', linewidth=1.5, alpha=0.8, label=label_hm_line)
+            
+            if label_hm_marker or label_hm_line:
+                 added_label_heatmap = True
+            
+    if added_label_vx and axes_vx: axes_vx.legend(fontsize='small')
+    if added_label_vt and axes_vt: axes_vt.legend(fontsize='small')
+    if added_label_heatmap and axes_heatmap: axes_heatmap.legend(fontsize='small')
+
+    if events:
+        print(f"\nОбнаружено {len(events)} событий stop-and-go волн:")
+        event_df = pd.DataFrame(events)
+        print(event_df.to_string())
+        try:
+            event_df.to_csv(output_csv_path, index=False, encoding='utf-8')
+            print(f"События сохранены в: {output_csv_path}")
+        except Exception as e:
+            print(f"Ошибка при сохранении событий в CSV: {e}")
+    else:
+        print("\nStop-and-go волны не обнаружены.")
+        try:
+            header = ['x_event_m', 't_event_s', 'wave_speed_mps', 'R_max_corr', 'dx_m', 'dt_sync_s', 'cam_idx_1', 'cam_idx_2']
+            with open(output_csv_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(header)
+            print(f"Пустой файл событий (с заголовками) сохранен в: {output_csv_path}")
+        except Exception as e:
+            print(f"Ошибка при сохранении пустого CSV файла событий: {e}")
+
+    return events
+# <<<<<< КОНЕЦ ДОБАВЛЕННОГО ОПРЕДЕЛЕНИЯ ФУНКЦИИ detect_stop_and_go_waves <<<<<<
 
 # Стандартные параметры IDM из статьи (Таблица 1, s1=0)
 DEFAULT_IDM_PARAMS = {
@@ -1514,7 +1849,7 @@ def main(): # Обернем основной код в функцию main()
     default_sumo_exe_path = "sumo-gui.exe" 
     if "SUMO_HOME" in os.environ:
         # Сначала ищем sumo-gui.exe
-        potential_gui_path = os.path.join(os.getenv("SUMO_HOME"), "bin", "sumo-gui.exe")
+        potential_gui_path = os.path.join(os.getenv("SUMO_HOME"), "bin", "sumo.exe")
         if os.path.isfile(potential_gui_path):
             default_sumo_exe_path = potential_gui_path
         else:
@@ -1800,14 +2135,19 @@ def main(): # Обернем основной код в функцию main()
                     if csv_file_to_analyze:
                         print(f"Найден CSV файл для анализа: {csv_file_to_analyze}")
                         
-                        cmd_analyze_data = [
-                            "python", "src/analyze_circle_data.py",
-                            "--file", csv_file_to_analyze,
+                        # Запускаем analyze_circle_data.py для этой директории результатов
+                        # Директория результатов - это та, где лежит CSV файл
+                        results_dir_for_analysis = os.path.dirname(csv_file_to_analyze)
+                        analyze_cmd = [
+                            "python",
+                            os.path.join("src", "analyze_circle_data.py"),
+                            "--results-dir", results_dir_for_analysis,
                             "--length", str(FIXED_RING_LENGTH) # Передаем длину кольца
                         ]
-                        print(f"Команда запуска анализа: {' '.join(cmd_analyze_data)}")
+                        print(f"Команда запуска анализа: {' '.join(analyze_cmd)}")
+
                         try:
-                            completed_process_analyze = subprocess.run(cmd_analyze_data, check=False, capture_output=True, text=True, errors='ignore') # check=False
+                            completed_process_analyze = subprocess.run(analyze_cmd, check=False, capture_output=True, text=True, errors='ignore') # check=False
                             print("STDOUT (analyze_circle_data.py):")
                             print(completed_process_analyze.stdout)
                             if completed_process_analyze.stderr:
