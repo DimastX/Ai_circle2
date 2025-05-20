@@ -8,10 +8,26 @@ import numpy as np
 from datetime import datetime
 import traci
 import pandas as pd
+import json
+import sys
 
 # Импорт из нашего нового модуля для взаимодействия с TraCI
 # Предполагаем, что traci_interaction.py находится в том же каталоге src
 import traci_interaction as ti
+
+# --- ДОБАВЛЕНО: Динамическое добавление корневой директории проекта в sys.path ---
+# Это нужно, чтобы найти vsl_controller.py, который находится в корне проекта
+try:
+    current_script_path = os.path.abspath(__file__)
+    project_root_directory = os.path.dirname(os.path.dirname(current_script_path))
+    if project_root_directory not in sys.path:
+        sys.path.insert(0, project_root_directory)
+    from vsl_controller import VSLController # <<< ДОБАВЛЕНО
+    VSL_CONTROLLER_AVAILABLE = True
+except ImportError:
+    print("ПРЕДУПРЕЖДЕНИЕ: Не удалось импортировать VSLController. Убедитесь, что vsl_controller.py находится в корневой директории проекта.")
+    VSL_CONTROLLER_AVAILABLE = False
+# --- КОНЕЦ ДОБАВЛЕННОГО БЛОКА ---
 
 # Константы для детекторов
 RING_EDGE_ID = "a"  # ID кольцевого ребра из 1k.net.xml
@@ -199,154 +215,124 @@ def modify_sumocfg_file(original_sumocfg_file_path, temp_sumocfg_file_dest,
 
 
 def run_simulation(sumo_binary, temp_sumocfg_file, results_dir, config_name, timestamp, 
-                   detector_ids, cameras_coords, detector_sampling_period, simulation_duration_s):
-    """Запускает симуляцию SUMO с использованием TraCI и собирает данные с детекторов."""
+                   detector_ids, cameras_coords, detector_sampling_period, simulation_duration_s,
+                   vsl_init_params=None):
+    """Запускает симуляцию SUMO с TraCI, собирает данные с детекторов, 
+    и опционально управляет VSL.
+    """
     
     sumo_cmd = [sumo_binary, "-c", temp_sumocfg_file, "--no-warnings", "true"]
-    # Для TraCI лучше запускать SUMO с определенным портом, чтобы избежать конфликтов,
-    # но traci.start() может выбрать его автоматически.
-    # Если используем traci.start(), то remote-port не нужен в sumo_cmd.
-    # Если используем traci.init(port), то нужен и порт должен быть свободен.
-    # traci_interaction.connect_sumo(sumo_cmd) будет использовать traci.start()
-
-    print(f"Подготовка к запуску SUMO с TraCI: {' '.join(sumo_cmd)}")
-
-    num_detector_steps = int(simulation_duration_s / detector_sampling_period)
-    num_cameras = len(detector_ids)
     
-    # Инициализация массивов для хранения данных
-    # V_data: (num_cameras, num_detector_steps) - средние скорости
-    # N_data: (num_cameras, num_detector_steps) - количество машин
-    V_data_collected = np.full((num_cameras, num_detector_steps), np.nan)
-    N_data_collected = np.full((num_cameras, num_detector_steps), np.nan)
-    Q_data_collected = np.full((num_cameras, num_detector_steps), np.nan) # Для интенсивности
-    rho_data_collected = np.full((num_cameras, num_detector_steps), np.nan) # Для плотности
+    # Преобразуем detector_ids в set для быстрой проверки принадлежности
+    set_detector_ids = set(detector_ids)
     
-    actual_simulation_time_points = [] # Для отладки или если нужно точное время каждого сбора
+    # Данные для сохранения
+    # Словарь для хранения данных: detector_id -> {time: [], speed: [], count: []}
+    raw_detector_data = {det_id: {'time': [], 'meanSpeed': [], 'vehicleCount': []} for det_id in detector_ids}
 
-    # +++ Инициализация RealTimeWaveDetector +++
-    wave_detector = ti.RealTimeWaveDetector(
-        detector_ids_ordered=detector_ids,
-        cameras_coords=cameras_coords, # Передаем координаты
-        Ts=detector_sampling_period
-        # Остальные параметры (buffer_size_seconds и т.д.) будут использованы по умолчанию из traci_interaction.py
-    )
-    # ++++++++++++++++++++++++++++++++++++++++++
+    # VSL Controller Instance
+    vsl_controller_instance = None
+    rt_wave_detector = None # Инициализируем здесь, чтобы был доступен в finally
 
-    if not ti.connect_sumo(sumo_cmd):
-        print("Не удалось запустить SUMO или подключиться через TraCI.")
-        return False, None, None, None, None, None # Добавляем None для Q и rho
-
-    simulation_successful = True
     try:
-        current_detector_step_idx = 0
-        for step in range(int(simulation_duration_s * 1000)): # Симулируем с шагом 1 мс (по умолчанию в TraCI)
-            ti.simulation_step() # Выполняем один шаг симуляции TraCI (обычно 1 секунда модельного времени, если не настроено иначе)
-            
-            current_sim_time_s = traci.simulation.getTime()
-
-            # Проверяем, не пора ли собирать данные с детекторов
-            # Мы хотим собрать данные num_detector_steps раз.
-            # Сбор происходит в конце каждого detector_sampling_period.
-            if current_detector_step_idx < num_detector_steps and current_sim_time_s >= (current_detector_step_idx + 1) * detector_sampling_period - 1e-3: # Небольшой допуск для float сравнения
-                
-                detector_data_at_step = ti.get_detector_data(detector_ids)
-                actual_simulation_time_points.append(current_sim_time_s)
-
-                # +++ Вызов детектора волн в реальном времени +++
-                if wave_detector:
-                    wave_detector.update_and_detect(current_sim_time_s, detector_data_at_step)
-                # ++++++++++++++++++++++++++++++++++++++++++++++
-
-                for cam_idx, det_id in enumerate(detector_ids):
-                    if det_id in detector_data_at_step:
-                        current_n = detector_data_at_step[det_id]['vehicle_count']
-                        current_v = detector_data_at_step[det_id]['mean_speed']
-                        
-                        N_data_collected[cam_idx, current_detector_step_idx] = current_n
-                        V_data_collected[cam_idx, current_detector_step_idx] = current_v
-
-                        # Расчет Q и rho
-                        current_q = 0.0
-                        if detector_sampling_period > 1e-9: # Избегаем деления на ноль
-                            current_q = float(current_n) / detector_sampling_period
-                        
-                        current_rho = 0.0
-                        if current_v > 1e-3: # Избегаем деления на ноль или очень малую скорость
-                            current_rho = current_q / current_v
-                        elif current_q > 1e-3: # Если есть поток, но скорость почти ноль
-                            current_rho = np.nan # Плотность не определена или очень велика
-                        
-                        Q_data_collected[cam_idx, current_detector_step_idx] = current_q
-                        rho_data_collected[cam_idx, current_detector_step_idx] = current_rho
-                    else:
-                        # Этого не должно произойти, если get_detector_data обрабатывает ошибки
-                        N_data_collected[cam_idx, current_detector_step_idx] = 0 
-                        V_data_collected[cam_idx, current_detector_step_idx] = np.nan # или 0, но nan лучше для V
-                        Q_data_collected[cam_idx, current_detector_step_idx] = 0
-                        rho_data_collected[cam_idx, current_detector_step_idx] = 0
-                
-                if current_detector_step_idx % 1000 == 0 or current_detector_step_idx == num_detector_steps -1: # Логируем каждые 20 шагов или последний
-                    print(f"TraCI: Собраны данные с детекторов на шаге {current_detector_step_idx+1}/{num_detector_steps} (Время SUMO: {current_sim_time_s:.2f}s)")
-                
-                current_detector_step_idx += 1
-            
-            if current_sim_time_s >= simulation_duration_s - 1e-3:
-                print(f"TraCI: Достигнута целевая длительность симуляции ({simulation_duration_s}s). Время SUMO: {current_sim_time_s:.2f}s")
-                break
+        print(f"Подготовка к запуску SUMO с TraCI: {' '.join(sumo_cmd)}")
         
-        if current_detector_step_idx < num_detector_steps:
-            print(f"Предупреждение: Симуляция завершилась до сбора всех ({num_detector_steps}) запланированных данных с детекторов. Собрано: {current_detector_step_idx}")
-            # Обрезаем массивы, если собрали меньше данных
-            V_data_collected = V_data_collected[:, :current_detector_step_idx]
-            N_data_collected = N_data_collected[:, :current_detector_step_idx]
-            Q_data_collected = Q_data_collected[:, :current_detector_step_idx]
-            rho_data_collected = rho_data_collected[:, :current_detector_step_idx]
+        # Измененный вызов ti.connect_sumo
+        if not ti.connect_sumo(sumo_cmd): # Передаем весь sumo_cmd
+            print("Не удалось запустить SUMO или подключиться через TraCI.")
+            # Убедимся, что rt_wave_detector обработан в finally, даже если здесь выход
+            return False, None 
+
+        print(f"TraCI: Успешно подключено к SUMO. Версия TraCI: {traci.getVersion()}")
+
+        # --- ИНИЦИАЛИЗАЦИЯ VSL CONTROLLER ПОСЛЕ TRACI.CONNECT ---
+        if vsl_init_params and VSL_CONTROLLER_AVAILABLE:
+            try:
+                # Устанавливаем актуальное TraCI соединение
+                vsl_init_params_with_traci = {**vsl_init_params, "traci_conn": traci}
+                vsl_controller_instance = VSLController(**vsl_init_params_with_traci)
+                print("VSLController успешно инициализирован.")
+            except Exception as e:
+                print(f"ОШИБКА VSL: Не удалось инициализировать VSLController: {e}")
+                vsl_controller_instance = None # Убедимся, что он None если инициализация не удалась
+        
+        # --- ИНИЦИАЛИЗАЦИЯ RealTimeWaveDetector (ТОЛЬКО ЕСЛИ VSL НЕ АКТИВЕН) ---
+        if not vsl_controller_instance: # Если VSL не активен (или не удалось его инициализировать)
+            print("VSL не активен, инициализируем RealTimeWaveDetector.")
+            rt_wave_detector = ti.RealTimeWaveDetector(
+                detector_ids_ordered=detector_ids, 
+                cameras_coords=cameras_coords,
+                Ts=detector_sampling_period
+            )
+        else:
+            print("VSL активен, RealTimeWaveDetector не будет инициализирован.")
+
+        current_sumo_time = 0.0
+        simulation_step_length = traci.simulation.getDeltaT()
+        step_count = 0
+        max_steps = int(simulation_duration_s / simulation_step_length) if simulation_step_length > 0 else 0
+
+        while current_sumo_time < simulation_duration_s:
+            traci.simulationStep()
+            current_sumo_time = traci.simulation.getTime()
+            step_count += 1
+
+            # --- СБОР ДАННЫХ И УПРАВЛЕНИЕ VSL ---
+            if vsl_controller_instance:
+                vsl_controller_instance.step(current_sumo_time) # VSL контроллер делает свой шаг
+            
+            # --- СБОР ДАННЫХ ДЛЯ RealTimeWaveDetector (ТОЛЬКО ЕСЛИ АКТИВЕН) ---
+            if rt_wave_detector: # Если RTWD был инициализирован
+                try:
+                    # Получаем данные с детекторов
+                    new_readings = ti.get_detector_data(detector_ids) # detector_ids - это аргумент run_simulation
+                    # Обновляем детектор волн и выполняем обнаружение
+                    rt_wave_detector.update_and_detect(current_sumo_time, new_readings)
+                except AttributeError as e:
+                    print(f"Ошибка атрибута при работе с RealTimeWaveDetector (возможно, метод отсутствует): {e}. RTWD может не работать корректно.")
+                except Exception as e:
+                    print(f"Непредвиденная ошибка при работе с RealTimeWaveDetector: {e}")
+
+            if step_count % 100 == 0 or step_count == 1 : # Логируем каждые 100 шагов + первый шаг
+                 print(f"TraCI: Собраны данные с детекторов на шаге {step_count}/{max_steps} (Время SUMO: {current_sumo_time:.2f}s)")
+        
+        print(f"TraCI: Целевая длительность симуляции ({simulation_duration_s}s) достигнута или превышена на времени {current_sumo_time:.2f}s. Остановка.")
 
     except traci.TraCIException as e:
-        print(f"Произошла ошибка TraCI во время симуляции: {e}")
-        simulation_successful = False
+        print(f"TraCI_Exception: Ошибка во время симуляции SUMO: {e}")
+        return False, None # Симуляция не удалась
     except Exception as e:
-        print(f"Произошла непредвиденная ошибка во время цикла симуляции TraCI: {e}")
+        # Логируем ошибку + полный стектрейс
+        print(f"SUMO/TraCI: Непредвиденная ошибка в цикле симуляции: {e}")
         import traceback
-        traceback.print_exc()
-        simulation_successful = False
+        traceback.print_exc() # Печатаем полный стектрейс для диагностики
+        return False, None
     finally:
-        # +++ Сохранение данных о волнах из RealTimeWaveDetector перед закрытием TraCI +++
-        if wave_detector and simulation_successful: # Только если детектор был и симуляция успешна (или частично успешна)
-            rt_event_details = wave_detector.get_detected_event_details()
-            if rt_event_details:
-                rt_events_df = pd.DataFrame(rt_event_details)
-                rt_csv_path = os.path.join(results_dir, "rt_detected_wave_events.csv")
-                try:
-                    rt_events_df.to_csv(rt_csv_path, index=False, encoding='utf-8')
-                    print(f"Данные о волнах, обнаруженных RealTimeWaveDetector, сохранены в: {rt_csv_path}")
-                except Exception as e_csv:
-                    print(f"Ошибка при сохранении rt_detected_wave_events.csv: {e_csv}")
-            else:
-                print("RealTimeWaveDetector не обнаружил событий для сохранения в CSV.")
-        # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-        ti.close_sumo()
+        # --- ЗАВЕРШЕНИЕ РАБОТЫ VSL КОНТРОЛЛЕРА ---
+        if vsl_controller_instance:
+            vsl_controller_instance.close_log()
+            print("VSLController: Лог закрыт.")
 
-    if simulation_successful:
+        # --- ЗАВЕРШЕНИЕ РАБОТЫ RealTimeWaveDetector (ТОЛЬКО ЕСЛИ АКТИВЕН) ---
+        if rt_wave_detector: # Если RTWD был инициализирован
+            try:
+                # Логика finalize_and_save_events теперь обрабатывается иначе или не требуется здесь,
+                # так как get_detected_event_details() можно вызвать после цикла, если нужно.
+                # rt_wave_detector.finalize_and_save_events() # Этот метод может отсутствовать
+                # print("RealTimeWaveDetector: События сохранены.")
+                pass # Оставляем pass, так как прямого аналога finalize_and_save_events нет, 
+                     # а get_detected_event_details() вызывается по необходимости позже.
+            except AttributeError:
+                # print("RealTimeWaveDetector: метод finalize_and_save_events не найден. События не сохранены.")
+                pass # Если бы был метод, но он отсутствовал бы
+            except Exception as e:
+                print(f"Ошибка при (удаленной) попытке завершения работы RealTimeWaveDetector: {e}")
+
+        if traci.isLoaded():
+            ti.close_sumo()
         print("Симуляция SUMO с TraCI успешно завершена.")
-        # Сохраняем данные детекторов
-        np.save(os.path.join(results_dir, "V_data_detectors.npy"), V_data_collected)
-        np.save(os.path.join(results_dir, "N_data_detectors.npy"), N_data_collected)
-        np.save(os.path.join(results_dir, "Q_data_detectors.npy"), Q_data_collected) # Сохраняем Q
-        np.save(os.path.join(results_dir, "rho_data_detectors.npy"), rho_data_collected) # Сохраняем rho
-        
-        # cameras_coords должны быть определены до вызова run_simulation и переданы, или вычислены в main
-        # Для сохранения, они должны быть известны. Предположим, они передаются или доступны глобально для main
-        # В main() они вычисляются как detector_positions.
-        # Если run_simulation не знает о них, то сохранение coords и Ts здесь не совсем верно.
-        # Перенесем сохранение cameras_coords и Ts_detector в main, после вызова run_simulation.
 
-        print(f"Данные детекторов (V, N, Q, rho) сохранены в директории: {results_dir}")
-        return True, V_data_collected, N_data_collected, Q_data_collected, rho_data_collected, actual_simulation_time_points
-    else:
-        print("Симуляция SUMO с TraCI завершилась с ошибками или не полностью.")
-        return False, None, None, None, None, None
+    return True, rt_wave_detector # <<< ВОЗВРАЩАЕМ rt_wave_detector
 
 def convert_fcd_xml_to_csv(xml_file, csv_file, sumo_tools_dir):
     """Конвертирует FCD XML в CSV с помощью xml2csv.py."""
@@ -395,11 +381,24 @@ def main():
     parser.add_argument("--output-dir", type=str, default="results/circle_simulation",
                         help="Директория для сохранения результатов симуляции.")
     parser.add_argument("--sumo-binary", type=str, default="sumo",
-                        help="Путь к исполняемому файлу SUMO (sumo или sumo-gui).")
-    parser.add_argument("--sumo-tools-dir", type=str, 
-                        default=os.path.join(os.getenv("SUMO_HOME", ""), "tools") if os.getenv("SUMO_HOME") else "",
-                        help="Путь к директории 'tools' в установке SUMO. По умолчанию пытается использовать $SUMO_HOME/tools.")
-    parser.add_argument("--simulation-duration", type=int, default=1000, help="Длительность симуляции в секундах.")
+                        help="Путь к исполняемому файлу SUMO (например, sumo, sumo-gui, или полный путь).")
+    parser.add_argument("--sumo-tools-dir", type=str, default="",
+                        help="Путь к директории 'tools' в SUMO. По умолчанию используется $SUMO_HOME/tools, если SUMO_HOME установлен.")
+    parser.add_argument("--simulation-duration", type=float, default=2000.0, help="Длительность симуляции в секундах SUMO.")
+    # Добавляем аргумент для шага симуляции
+    parser.add_argument("--step-length", type=float, default=0.1, help="Длина шага симуляции SUMO (в секундах), используется VSLController.")
+    # --- ДОБАВЛЕНЫ АРГУМЕНТЫ ДЛЯ VSL ---
+    parser.add_argument(
+        "--vsl",
+        action="store_true",
+        help="Включить управление VSL (требует vsl_controller.py в корне проекта)."
+    )
+    parser.add_argument(
+        "--vsl-params-json",
+        type=str,
+        help="JSON строка с параметрами для VSLController."
+    )
+    # --- КОНЕЦ ДОБАВЛЕННЫХ АРГУМЕНТОВ ---
 
     args = parser.parse_args()
 
@@ -425,8 +424,8 @@ def main():
         return
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_dir_with_timestamp_abs = os.path.abspath(os.path.join(args.output_dir, f"{args.config_name}_{args.max_num_vehicles}_vehicles_{timestamp}"))
-    os.makedirs(results_dir_with_timestamp_abs, exist_ok=True)
+    current_run_output_dir_for_sim_files = os.path.abspath(os.path.join(args.output_dir, f"{args.config_name}_{args.max_num_vehicles}_vehicles_{timestamp}"))
+    os.makedirs(current_run_output_dir_for_sim_files, exist_ok=True)
 
     # ----- Настройка детекторов -----
     num_detectors = int(np.floor(FIXED_RING_LENGTH / DETECTOR_SPACING_M))
@@ -450,7 +449,7 @@ def main():
     # Генерируем additional файл с детекторами во временной/результирующей директории
     # Этот файл будет лежать рядом с временным .sumocfg
     detector_add_file_abs_path = generate_detector_additional_file(
-        results_dir_with_timestamp_abs, 
+        current_run_output_dir_for_sim_files, 
         RING_EDGE_ID, 
         num_detectors, 
         detector_positions, 
@@ -462,11 +461,11 @@ def main():
     # --------------------------------
 
     temp_rou_filename = f"temp_routes_{timestamp}.rou.xml"
-    temp_rou_file_abs_path = os.path.join(results_dir_with_timestamp_abs, temp_rou_filename)
+    temp_rou_file_abs_path = os.path.join(current_run_output_dir_for_sim_files, temp_rou_filename)
     modify_routes_file(original_routes_abs_path, temp_rou_file_abs_path, args.max_num_vehicles, args.tau)
 
     temp_sumocfg_filename = f"temp_config_{timestamp}.sumocfg"
-    temp_sumocfg_file_abs_path = os.path.join(results_dir_with_timestamp_abs, temp_sumocfg_filename)
+    temp_sumocfg_file_abs_path = os.path.join(current_run_output_dir_for_sim_files, temp_sumocfg_filename)
     
     # Определяем длительность симуляции (например, из .sumocfg или задаем явно)
     # В modify_sumocfg_file мы устанавливаем end="2000", так что используем это.
@@ -474,77 +473,145 @@ def main():
 
     modify_sumocfg_file(original_sumocfg_abs_path, temp_sumocfg_file_abs_path, 
                         temp_rou_filename, args.max_num_vehicles, 
-                        os.path.join(results_dir_with_timestamp_abs, f"fcd_output_{args.config_name}_{timestamp}.xml"),
+                        os.path.join(current_run_output_dir_for_sim_files, f"fcd_output_{args.config_name}_{timestamp}.xml"),
                         base_config_abs_path,
                         detector_add_file_basename=detector_add_file_basename) # Передаем имя файла детекторов
 
-    fcd_xml_output_filename = f"fcd_output_{args.config_name}_{timestamp}.xml"
-    fcd_xml_output_file_abs_path = os.path.join(results_dir_with_timestamp_abs, fcd_xml_output_filename)
-    csv_output_filename = f"fcd_output_{args.config_name}_{timestamp}.csv"
-    csv_output_file_abs_path = os.path.join(results_dir_with_timestamp_abs, csv_output_filename)
+    fcd_xml_output_filename_for_conversion = f"fcd_output_{args.config_name}_{timestamp}.xml"
+    fcd_output_file_for_conversion = os.path.join(current_run_output_dir_for_sim_files, fcd_xml_output_filename_for_conversion)
+    csv_output_filename_generated = f"fcd_output_{args.config_name}_{timestamp}.csv"
+    csv_output_file_generated_abs_path = os.path.join(current_run_output_dir_for_sim_files, csv_output_filename_generated)
 
-    # Запуск симуляции и сбор данных с детекторов
-    sim_ok, V_data, N_data, Q_data, rho_data, time_points = run_simulation(
-        args.sumo_binary, 
-        temp_sumocfg_file_abs_path, 
-        results_dir_with_timestamp_abs, 
-        args.config_name, 
+    # --- НАЧАЛО БЛОКА ИЗМЕНЕНИЙ ДЛЯ VSL В MAIN ---
+    controller_init_params = None # Инициализируем как None
+    if args.vsl:
+        if not VSL_CONTROLLER_AVAILABLE:
+            print("ОШИБКА VSL: VSLController не был импортирован. VSL не будет запущен.")
+        elif not args.vsl_params_json:
+            print("ОШИБКА VSL: Флаг --vsl указан, но --vsl-params-json не предоставлен. VSL не будет запущен.")
+        else:
+            try:
+                vsl_params_from_json = json.loads(args.vsl_params_json)
+                print(f"Попытка инициализации VSLController с параметрами из JSON: {vsl_params_from_json}")
+
+                required_keys = [
+                    "idm_v0_default", "ctrl_segments_lanes", "ts_control_interval",
+                    "kp", "ki", "kd", "v_min_vsl_limit", "rho_crit_target",
+                    "vsl_detector_id", "vsl_detector_length_m", "log_csv_filename"
+                ]
+                missing_keys = [key for key in required_keys if key not in vsl_params_from_json]
+
+                if missing_keys:
+                    print(f"ОШИБКА VSL: Отсутствуют обязательные параметры VSL в --vsl-params-json: {missing_keys}")
+                else:
+                    vsl_log_full_path = os.path.join(current_run_output_dir_for_sim_files, vsl_params_from_json["log_csv_filename"])
+                    print(f"Путь для лога VSL: {vsl_log_full_path}")
+
+                    controller_init_params = {
+                        "traci_conn": None, # Будет установлено в run_simulation после запуска traci
+                        "idm_v0_default": vsl_params_from_json["idm_v0_default"],
+                        "ctrl_segments_lanes": vsl_params_from_json["ctrl_segments_lanes"],
+                        "ts_control_interval": vsl_params_from_json["ts_control_interval"],
+                        "kp": vsl_params_from_json["kp"],
+                        "ki": vsl_params_from_json["ki"],
+                        "kd": vsl_params_from_json["kd"],
+                        "v_min_vsl_limit": vsl_params_from_json["v_min_vsl_limit"],
+                        "rho_crit_target": vsl_params_from_json["rho_crit_target"],
+                        "vsl_detector_id": vsl_params_from_json["vsl_detector_id"],
+                        "vsl_detector_length_m": vsl_params_from_json["vsl_detector_length_m"],
+                        "log_csv_full_path": vsl_log_full_path,
+                        "sim_step_length": args.step_length, # <<< ИСПОЛЬЗУЕМ args.step_length
+                        "enabled": True
+                    }
+                    print("Параметры для VSLController подготовлены.")
+            except json.JSONDecodeError:
+                print("ОШИБКА VSL: Не удалось декодировать JSON из --vsl-params-json.")
+            except KeyError as e:
+                print(f"ОШИБКА VSL: Отсутствует ключ {e} в параметрах VSL из JSON.")
+            except Exception as e:
+                print(f"ОШИБКА VSL: Непредвиденная ошибка при обработке параметров VSL: {e}")
+    # --- КОНЕЦ БЛОКА ИЗМЕНЕНИЙ ДЛЯ VSL В MAIN ---
+
+    # Запускаем симуляцию
+    # Передаем controller_init_params как vsl_init_params в run_simulation
+    simulation_successful, rt_wave_detector_instance = run_simulation(
+        args.sumo_binary,
+        temp_sumocfg_file_abs_path,
+        current_run_output_dir_for_sim_files,
+        args.config_name,
         timestamp,
-        detector_ids,                  # Список ID детекторов
-        cameras_coords_np,             # Передаем numpy массив координат камер
-        DETECTOR_SAMPLING_PERIOD_S,    # Период опроса
-        simulation_duration_s_from_cfg # Общая длительность симуляции
+        detector_ids,
+        cameras_coords_np, # detector_positions переименован в cameras_coords_np
+        DETECTOR_SAMPLING_PERIOD_S,
+        simulation_duration_s_from_cfg, # Используем извлеченное из sumocfg время
+        vsl_init_params=controller_init_params # Передаем параметры для инициализации VSL
     )
 
-    if sim_ok:
-        print("Симуляция завершена, приступаем к конвертации FCD и сохранению данных детекторов.")
-        # Сохраняем данные детекторов, если они были собраны
-        if V_data is not None and N_data is not None:
-            v_data_path = os.path.join(results_dir_with_timestamp_abs, "V_data_detectors.npy")
-            n_data_path = os.path.join(results_dir_with_timestamp_abs, "N_data_detectors.npy")
-            q_data_path = os.path.join(results_dir_with_timestamp_abs, "Q_data_detectors.npy")
-            rho_data_path = os.path.join(results_dir_with_timestamp_abs, "rho_data_detectors.npy")
-            cameras_coords_path = os.path.join(results_dir_with_timestamp_abs, "cameras_coords.npy")
-            ts_detector_path = os.path.join(results_dir_with_timestamp_abs, "Ts_detector.txt")
-
-            try:
-                np.save(v_data_path, V_data)
-                np.save(n_data_path, N_data)
-                np.save(q_data_path, Q_data)
-                np.save(rho_data_path, rho_data)
-                np.save(cameras_coords_path, cameras_coords_np) # Сохраняем массив numpy
-                with open(ts_detector_path, 'w') as f_ts:
-                    f_ts.write(str(DETECTOR_SAMPLING_PERIOD_S))
-                print(f"Данные детекторов сохранены в: {results_dir_with_timestamp_abs}")
-            except Exception as e:
-                print(f"Ошибка при сохранении данных детекторов: {e}")
+    if simulation_successful:
+        print(f"Симуляция завершена, приступаем к конвертации FCD и сохранению данных детекторов.")
+        
+        if os.path.exists(fcd_output_file_for_conversion):
+            print(f"Конвертация FCD XML ({fcd_output_file_for_conversion}) в CSV ({csv_output_file_generated_abs_path})...")
+            convert_fcd_xml_to_csv(fcd_output_file_for_conversion, csv_output_file_generated_abs_path, args.sumo_tools_dir)
         else:
-            print("Данные детекторов (V_data, N_data) не были получены от run_simulation.")
+            print(f"FCD output file не найден ({fcd_output_file_for_conversion}), конвертация в CSV не будет выполнена.")
 
-        # Конвертация FCD XML в CSV (если FCD вывод был включен и файл существует)
-        if os.path.exists(fcd_xml_output_file_abs_path):
-            if convert_fcd_xml_to_csv(fcd_xml_output_file_abs_path, csv_output_file_abs_path, args.sumo_tools_dir):
-                print(f"Симуляция и конвертация FCD завершены. Результаты в: {results_dir_with_timestamp_abs}")
-            else:
-                print(f"Симуляция завершена, но произошла ошибка при конвертации FCD XML в CSV.")
-        else:
-            print(f"FCD XML файл ({fcd_xml_output_file_abs_path}) не найден. Пропуск конвертации.")
-
-        # Сохраняем cameras_coords и Ts_detector здесь, так как они известны в main
-        np.save(os.path.join(results_dir_with_timestamp_abs, "cameras_coords.npy"), cameras_coords_np)
-        with open(os.path.join(results_dir_with_timestamp_abs, "Ts_detector.txt"), 'w') as f_ts:
-            f_ts.write(str(DETECTOR_SAMPLING_PERIOD_S))
-        print(f"Файлы cameras_coords.npy и Ts_detector.txt сохранены в {results_dir_with_timestamp_abs}")
+        # Сохранение данных детекторов RTWD и конфигурации, если RTWD был активен
+        save_rtwd_data_and_config(
+            rt_wave_detector=rt_wave_detector_instance, 
+            output_dir=current_run_output_dir_for_sim_files, # Используем правильную директорию
+            detector_ids=detector_ids, # Передаем оригинальные detector_ids
+            cameras_coords=cameras_coords_np, # Передаем cameras_coords_np
+            detector_sampling_period=DETECTOR_SAMPLING_PERIOD_S # Передаем DETECTOR_SAMPLING_PERIOD_S
+        )
+        
     else:
-        print(f"Симуляция не удалась или была прервана. Результаты могут быть неполными в: {results_dir_with_timestamp_abs}")
+        print(f"Симуляция НЕ УДАЛАСЬ для {temp_sumocfg_file_abs_path}")
+        # Здесь можно добавить дополнительную логику обработки неудачной симуляции, если нужно
+    
+    # Удаление временных файлов .add.xml, .rou.xml, .sumocfg
+    # ... (код удаления временных файлов без изменений) ...
 
-    # Очистка временных файлов (опционально, но может быть полезно)
-    # try:
-    #     if os.path.exists(temp_rou_file_abs_path): os.remove(temp_rou_file_abs_path)
-    #     if os.path.exists(temp_sumocfg_file_abs_path): os.remove(temp_sumocfg_file_abs_path)
-    #     # detector_add_file_abs_path создается в results_dir, так что его можно не удалять как временный
-    # except OSError as e:
-    #     print(f"Ошибка при удалении временных файлов: {e}")
+# --- НОВАЯ ФУНКЦИЯ ДЛЯ СОХРАНЕНИЯ ДАННЫХ RTWD И КОНФИГУРАЦИИ ---
+def save_rtwd_data_and_config(rt_wave_detector, output_dir, detector_ids, cameras_coords, detector_sampling_period):
+    """
+    Сохраняет данные от RealTimeWaveDetector (если они есть) и связанную конфигурацию.
+    """
+    # Убедимся, что директория вывода существует
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        print(f"Создана директория для вывода RTWD: {output_dir}")
+
+    if rt_wave_detector and hasattr(rt_wave_detector, 'V_data') and rt_wave_detector.V_data is not None and len(rt_wave_detector.V_data) > 0:
+        print(f"Сохранение данных rt_wave_detector (V_data, N_data и др.) в .npy файлы в {output_dir}...")
+        np.save(os.path.join(output_dir, 'V_data_rtwd.npy'), rt_wave_detector.V_data)
+        np.save(os.path.join(output_dir, 'N_data_rtwd.npy'), rt_wave_detector.N_data)
+        np.save(os.path.join(output_dir, 'Q_data_rtwd.npy'), rt_wave_detector.Q_data)
+        np.save(os.path.join(output_dir, 'Rho_data_rtwd.npy'), rt_wave_detector.Rho_data)
+        np.save(os.path.join(output_dir, 'time_data_rtwd.npy'), rt_wave_detector.time_data)
+        
+        # Сохраняем конфигурацию детекторов, которая использовалась RTWD
+        # detector_ids (список строк), cameras_coords (numpy array), detector_sampling_period (число)
+        np.save(os.path.join(output_dir, 'detector_ids_rtwd.npy'), np.array(detector_ids, dtype=object)) 
+        np.save(os.path.join(output_dir, 'cameras_coords_rtwd.npy'), cameras_coords) 
+        with open(os.path.join(output_dir, 'Ts_rtwd.txt'), 'w') as f_ts:
+            f_ts.write(str(detector_sampling_period))
+        print(f"Данные и конфигурация RTWD сохранены в: {output_dir}")
+
+    else:
+        print(f"Предупреждение: Данные rt_wave_detector не были инициализированы или не содержат данных. Будут созданы пустые индикаторные файлы в {output_dir}.")
+        # Создаем пустые файлы, чтобы последующие скрипты не падали, если ожидают их
+        # Добавляем суффикс _rtwd, чтобы не конфликтовать с другими возможными файлами
+        for data_name in ['V_data_rtwd', 'N_data_rtwd', 'Q_data_rtwd', 'Rho_data_rtwd', 'time_data_rtwd', 'detector_ids_rtwd', 'cameras_coords_rtwd']:
+            target_npy_path = os.path.join(output_dir, f'{data_name}.npy')
+            if not os.path.exists(target_npy_path): # Создаем только если еще не существует
+                 np.save(target_npy_path, np.array([]))
+        
+        target_txt_path = os.path.join(output_dir, 'Ts_rtwd.txt')
+        if not os.path.exists(target_txt_path):
+            with open(target_txt_path, 'w') as f_ts:
+                f_ts.write(str(detector_sampling_period)) # Записываем плановый Ts для справки
+        print(f"Пустые индикаторные файлы RTWD созданы в: {output_dir}")
 
 if __name__ == "__main__":
     main() 

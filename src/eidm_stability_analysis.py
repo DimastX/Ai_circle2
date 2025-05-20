@@ -1,16 +1,17 @@
 import math
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.optimize import brentq # Для поиска корней
-import argparse # Добавлено для аргументов командной строки
-import os # Добавлено для работы с путями
-import subprocess # Добавлено для запуска внешних скриптов
-from datetime import datetime # Для генерации уникальных имен директорий
-import json # Добавлено для чтения JSON
-import cmath # Добавлено для комплексных чисел в lambda_max
-import pandas as pd # Добавлено для DataFrame и CSV
-from scipy.signal import correlate as scipy_correlate, find_peaks # Добавлено для кросс-корреляции и поиска пиков
-import csv # Добавлено для сохранения в CSV
+from scipy.optimize import brentq 
+import argparse
+import os
+import subprocess
+from datetime import datetime
+import json
+import cmath
+import pandas as pd
+from scipy.signal import correlate as scipy_correlate, find_peaks
+import csv
+import logging
 
 """
 Скрипт для анализа линейной устойчивости Интеллектуальной Модели Водителя (IDM).
@@ -1842,6 +1843,52 @@ def plot_stability_for_parameter_sweep(data, swept_param_key, swept_param_label,
 FIXED_RING_LENGTH = 901.53 # Длина кольца для 1k.net.xml
 CONFIG_NAME_FOR_SUMO = "1k" # Имя конфигурации для run_circle_simulation.py
 
+DEFAULT_VSL_PARAMS = {
+    "vsl_detector_id": "det_0", 
+    "vsl_detector_length_m": 100.0, 
+    "ctrl_segments_lanes": ["a_0"], 
+    "ts_control_interval": 5.0,     
+    "kp": 0.1,                      
+    "ki": 0.02,                     
+    "kd": 0.0,                      
+    "v_min_vsl_limit": 10.0,        
+    "log_csv_filename": "vsl_controller_log.csv"
+}
+
+# +++ ДОБАВЛЕНА ФУНКЦИЯ +++
+def compute_rho_crit(v0: float, T: float, s0: float, veh_length: float = 5.0) -> float:
+    """
+    Вычисляет критическую плотность ρ_crit (veh/km) на основе параметров IDM.
+    Используется аппроксимация для оптимальной скорости, при которой достигается максимальный поток,
+    а затем вычисляется соответствующая плотность.
+    Args:
+        v0 (float): Желаемая скорость (м/с).
+        T (float): Безопасное время реакции (с).
+        s0 (float): Минимальная дистанция (м).
+        veh_length (float, optional): Средняя длина транспортного средства (м). Defaults to 5.0.
+    Returns:
+        float: Критическая плотность (ТС/км).
+    """
+    logger_rho_crit = logging.getLogger(__name__ + ".compute_rho_crit") # Логгер для этой функции
+    if v0 * T <= 0: 
+        v_optimal_approx = v0 / 2.0 
+    else:
+        v_optimal_approx = (s0 / T) * (math.sqrt(1 + 2 * v0 * T / s0) - 1) if s0 > 0 and T > 0 else v0 / 2.0
+    
+    if v_optimal_approx <= 0:
+        v_optimal_approx = v0 / 2.0 
+
+    s_headway_crit = s0 + v_optimal_approx * T + veh_length
+    
+    if s_headway_crit <= veh_length: 
+        s_headway_crit = s0 + veh_length + 1.0 
+        logger_rho_crit.warning(f"s_headway_crit был слишком мал, скорректирован до {s_headway_crit:.2f}")
+
+    rho_crit_veh_per_m = 1.0 / s_headway_crit
+    rho_crit_veh_km = rho_crit_veh_per_m * 1000.0 
+    return rho_crit_veh_km
+# --- КОНЕЦ ДОБАВЛЕННОЙ ФУНКЦИИ ---
+
 def main(): # Обернем основной код в функцию main()
     parser = argparse.ArgumentParser(description="Анализ устойчивости EIDM и опциональный запуск SUMO симуляций.")
     
@@ -1849,7 +1896,7 @@ def main(): # Обернем основной код в функцию main()
     default_sumo_exe_path = "sumo-gui.exe" 
     if "SUMO_HOME" in os.environ:
         # Сначала ищем sumo-gui.exe
-        potential_gui_path = os.path.join(os.getenv("SUMO_HOME"), "bin", "sumo.exe")
+        potential_gui_path = os.path.join(os.getenv("SUMO_HOME"), "bin", "sumo-gui.exe")
         if os.path.isfile(potential_gui_path):
             default_sumo_exe_path = potential_gui_path
         else:
@@ -1878,6 +1925,19 @@ def main(): # Обернем основной код в функцию main()
     parser.add_argument("--num-vehicles-sumo", type=int, default=30, help="Количество ТС для симуляций SUMO (если не рассчитывается динамически).") # Этот аргумент теперь менее релевантен здесь
     # УДАЛЕНО: parser.add_argument("--fixed-net-file", type=str, default="config/circles/1k.net.xml", help="Путь к фиксированному .net.xml файлу для SUMO.")
 
+    # Добавляем аргументы для VSL
+    parser.add_argument(
+        "--vsl",
+        action="store_true",
+        help="Включить VSL управление в запускаемых симуляциях SUMO."
+    )
+    # Удаляем --vsl-config-file, так как параметры будут передаваться через JSON
+    # parser.add_argument(
+    #     "--vsl-config-file",
+    #     type=str,
+    #     default="vsl_config.yml", 
+    #     help="Путь к файлу конфигурации VSL (YAML) для симуляций SUMO."
+    # )
 
     args = parser.parse_args()
 
@@ -2045,6 +2105,36 @@ def main(): # Обернем основной код в функцию main()
                     #"--idm-params", json.dumps({'T_safe_time_headway': current_T}) # Пока run_circle_simulation.py не поддерживает это
                 ]
                 
+                # Добавляем флаги VSL, если они были указаны для eidm_stability_analysis.py
+                if args.vsl:
+                    # Собираем параметры для VSL контроллера
+                    # Используем базовые параметры IDM для расчета rho_crit_target и для idm_v0_default
+                    base_idm_for_vsl = sim_params_base # sim_params_base is a copy of DEFAULT_IDM_PARAMS
+                    
+                    vsl_idm_v0_default = base_idm_for_vsl['v0_desired_speed']
+                    vsl_idm_T = base_idm_for_vsl['T_safe_time_headway']
+                    vsl_idm_s0 = base_idm_for_vsl['s0_jam_distance']
+                    vsl_idm_l_vehicle = base_idm_for_vsl['l_vehicle_length']
+
+                    # Вычисляем rho_crit_target используя функцию compute_rho_crit
+                    rho_crit_target_value = compute_rho_crit(
+                        v0=vsl_idm_v0_default,
+                        T=vsl_idm_T,
+                        s0=vsl_idm_s0,
+                        veh_length=vsl_idm_l_vehicle
+                    )
+                    
+                    vsl_params_to_pass = DEFAULT_VSL_PARAMS.copy()
+                    vsl_params_to_pass['rho_crit_target'] = rho_crit_target_value
+                    vsl_params_to_pass['idm_v0_default'] = vsl_idm_v0_default
+                    
+                    cmd_run_sim.append("--vsl")
+                    cmd_run_sim.append("--vsl-params-json")
+                    cmd_run_sim.append(json.dumps(vsl_params_to_pass))
+                    print(f"INFO: VSL будет активирован. Параметры VSL (передаются в JSON): {json.dumps(vsl_params_to_pass)}")
+                else:
+                    print(f"INFO: VSL не будет активирован для этой симуляции (флаг --vsl не указан для eidm_stability_analysis.py).")
+
                 # Временно: Обновляем IDM параметры в base_params для текущей симуляции
                 # Если бы run_circle_simulation.py поддерживал --idm-params, это было бы лучше
                 # Этот подход менее надежен, т.к. предполагается, что run_circle_simulation 
@@ -2247,4 +2337,10 @@ def main(): # Обернем основной код в функцию main()
 
 
 if __name__ == "__main__":
+    # Настройка логирования для всего скрипта (включая импортируемые модули, если они используют logging.getLogger(__name__))
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)-8s - %(name)-25s - %(message)s')
+    # Уменьшаем уровень логирования для matplotlib, чтобы не засорять вывод
+    logging.getLogger('matplotlib').setLevel(logging.WARNING)
+    
+    # Запускаем основную функцию
     main()
