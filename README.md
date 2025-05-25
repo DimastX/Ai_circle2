@@ -1,6 +1,6 @@
 # AI Circle Simulation
 
-Проект для моделирования движения транспортных средств по круговой дороге с использованием SUMO (Simulation of Urban MObility) и EIDM (Enhanced Intelligent Driver Model). Проект включает в себя различные сценарии моделирования, включая анализ пробок и теорию пробок.
+Проект для моделирования движения транспортных средств по круговой дороге с использованием SUMO (Simulation of Urban MObility) и EIDM (Enhanced Intelligent Driver Model). Проект включает в себя различные сценарии моделирования, включая анализ пробок, теорию пробок и управление переменными скоростными ограничениями (VSL).
 
 ## Структура проекта
 
@@ -9,6 +9,7 @@
 ├── config/
 │   ├── network/     # Файлы сети (circle.net.xml, circle.nod.xml, circle.edg.xml)
 │   └── routes/      # Файлы маршрутов (генерируются автоматически)
+│   └── vsl_config.yml # Конфигурационный файл для VSL контроллера
 ├── data/            # Может использоваться для хранения специфичных данных сценариев (не результатов)
 ├── results/         # Директория для всех результатов симуляций и анализа
 │   └── run_XXXX/    # Конкретная директория запуска симуляции
@@ -20,7 +21,8 @@
 │       ├── rho_data_detectors.npy# Данные о плотности с детекторов
 │       ├── cameras_coords.npy   # Координаты детекторов
 │       ├── Ts_detector.txt      # Период опроса детекторов
-│       └── rt_detected_wave_events.csv # События волн, обнаруженные в реальном времени
+│       ├── rt_detected_wave_events.csv # События волн, обнаруженные в реальном времени
+│       └── vsl_log.csv          # Лог работы VSL контроллера (если включено)
 ├── ring_files/      # Файлы для кольцевой дороги (например, add_detectors.xml)
 ├── src/
 │   ├── __init__.py
@@ -28,6 +30,7 @@
 │   ├── analyze_circle_data.py    # Скрипт анализа данных FCD и детекторов
 │   ├── eidm_stability_analysis.py# Теоретический анализ устойчивости и вызов симуляций
 │   ├── traci_interaction.py      # Модуль для взаимодействия с TraCI и RealTimeWaveDetector
+│   ├── vsl_controller.py         # Модуль VSL контроллера
 │   ├── generate_circle_rou_new.py  # Генератор маршрутов (может быть устаревшим)
 │   ├── run_circle.py              # Старый скрипт запуска симуляции (без детекторов)
 │   ├── analyze_data.py           # Старый скрипт анализа данных
@@ -69,6 +72,103 @@
    python analyze_circle_data.py --results-dir path/to/results/run_XXXX --warmup-time 150
    ```
    Это создаст поддиректорию `analysis_plots_YYYY` внутри `run_XXXX` с графиками и `analysis_summary.json`.
+
+### Запуск симуляции с VSL контроллером
+
+VSL контроллер может быть запущен как самостоятельный скрипт (для тестирования или отдельных сценариев) или интегрирован в существующий симуляционный скрипт.
+
+1.  **Как самостоятельный скрипт**:
+    ```bash
+    python -m src.vsl_controller --net config/network/circle.net.xml --routes config/routes/generated.rou.xml --vsl
+    ```
+    Ключевые аргументы командной строки:
+    *   `--config`: Путь к `.sumocfg` файлу SUMO.
+    *   `--net`: Путь к файлу сети (`.net.xml`).
+    *   `--routes`: Путь к файлу маршрутов (`.rou.xml`).
+    *   `--sumo-bin`: Путь к исполняемому файлу SUMO (`sumo-gui` или `sumo`). По умолчанию `sumo`.
+    *   `--duration`: Длительность симуляции в секундах. По умолчанию `3600`.
+    *   `--nogui`: Запуск SUMO без GUI. По умолчанию `False` (с GUI).
+    *   `--vsl`: Включить VSL контроллер. По умолчанию `False`.
+    *   `--vsl-config`: Путь к YAML файлу конфигурации VSL контроллера. По умолчанию `vsl_config.yml` в корне проекта.
+
+2.  **Интеграция в существующий скрипт**:
+    Предполагается, что ваш основной симуляционный скрипт имеет главный цикл. Вы можете импортировать и использовать `VSLController` следующим образом:
+
+    ```python
+    # В вашем основном скрипте симуляции
+    import traci
+    from src.vsl_controller import VSLController, Config  # Убедитесь, что src в PYTHONPATH
+
+    # ... ваш код инициализации TraCI ...
+
+    # Пример получения флага --vsl из аргументов
+    # import argparse
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument('--vsl', action='store_true', help='Enable VSL controller')
+    # args = parser.parse_args()
+    # vsl_enabled_by_flag = args.vsl
+
+    vsl_enabled_by_flag = True # или False, в зависимости от вашей логики
+
+    if vsl_enabled_by_flag:
+        vsl_config_path = "vsl_config.yml" # Путь к вашему конфиг файлу
+        vsl_cfg = Config(vsl_config_path)
+        vsl_controller = VSLController(traci, vsl_cfg, enabled=True)
+    else:
+        vsl_controller = None
+
+    simulation_time = 0
+    step_length = 0.1 # Ваш шаг симуляции
+
+    while simulation_time < SIMULATION_DURATION:
+        traci.simulationStep()
+        simulation_time += step_length
+
+        if vsl_controller and vsl_controller.is_enabled():
+            vsl_controller.step(simulation_time)
+
+        # ... остальная логика вашего шага симуляции ...
+
+    # ... ваш код завершения TraCI ...
+    ```
+
+### Конфигурация VSL (`vsl_config.yml`)
+
+Файл `vsl_config.yml` (по умолчанию создается с настройками по умолчанию, если не существует) содержит параметры для VSL контроллера. Пример:
+
+```yaml
+v0: 20.0           # Желаемая скорость (м/с) из IDM, также начальная скорость для VSL
+T: 1.5             # Желаемое время следования (с) из IDM
+a: 1.0             # Максимальное ускорение (м/с^2) из IDM
+b: 1.5             # Комфортное торможение (м/с^2) из IDM
+s0: 2.0            # Минимальный зазор (м) из IDM
+delta: 4           # Экспонента ускорения из IDM
+l_veh: 5.0         # Длина транспортного средства (м)
+
+camera_dx: 100.0    # Длина зоны детектирования "камеры" (м)
+camera_lanes:       # Список ID полос для "камеры-0"
+  - "E0_0"
+ctrl_segments:     # Список ID полос для применения VSL
+  - "E0_0"
+Ts: 5.0             # Шаг управления VSL (с)
+Kp: 0.1
+Ki: 0.01
+Kd: 0.0
+v_min: 5.0          # Минимальная скорость для VSL (м/с)
+rho_crit: 0.02      # Целевая/критическая плотность (авт/м), может быть 'auto' для расчета
+log_csv: "vsl_log.csv" # Имя CSV файла для логгирования (относительно директории results/run_XXXX/)
+hot_reload_interval: 60 # Интервал горячей перезагрузки конфига (с)
+```
+Основные параметры:
+*   Параметры IDM (`v0, T, a, b, s0, delta, l_veh`): Используются для расчета $\rho_{crit}$ (если 'auto') и как базовые значения.
+*   `camera_dx`, `camera_lanes`: Определяют зону, где собираются данные о потоке (количество машин $N$, средняя скорость $\bar{v}$).
+*   `ctrl_segments`: Полосы, на которых устанавливаются ограничения скорости VSL.
+*   `Ts`: Периодичность работы алгоритма VSL (сбор данных, расчет, применение нового $v_{VSL}$).
+*   `Kp, Ki, Kd`: Коэффициенты ПИД-регулятора.
+*   `v_min`: Минимальное значение скорости, которое может установить VSL.
+*   `rho_crit`: Целевая плотность. Если установлено в `'auto'`, рассчитывается на основе параметров IDM при инициализации. (Примечание: текущая реализация `vsl_controller.py` может использовать упрощенный расчет $\rho_{crit}$ или требовать его явного задания).
+*   `log_csv`: Имя файла для записи логов работы VSL (например, `sim_time, rho, error, v_vsl, control_action_u`). Файл сохраняется в директорию результатов текущего запуска симуляции.
+*   `hot_reload_interval`: Как часто (в секундах) скрипт будет проверять изменения в YAML файле конфигурации и перезагружать их без остановки симуляции.
 
 ### Теоретический анализ устойчивости и пакетный запуск симуляций
 Смотрите раздел "Анализ устойчивости и сравнение с SUMO (eidm_stability_analysis.py)".
