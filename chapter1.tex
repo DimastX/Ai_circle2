@@ -1,0 +1,237 @@
+\section{Модель EIDM}
+\label{sec:eidm_model}
+
+Рассмотрим однополосную дорогу, на которой движутся автомобили. Для каждого автомобиля $i$ в момент времени $t$ заданы следующие характеристики:
+\begin{itemize}
+    \item координата $x_i(t)$,
+    \item скорость $v_i(t)$,
+    \item дистанция $s_i(t)$ до впереди идущего автомобиля.
+\end{itemize}
+\begin{figure}[h]
+	\centering
+	\includegraphics[width=0.8\linewidth]{EIDM.png}
+	\caption{Схема движения автомобилей}
+	\label{fig:EIDM}
+\end{figure}
+
+\subsection{Уравнение движения}
+\label{subsec:eidm_equation}
+
+Пусть $x_i(t)$ — координата автомобиля $i$, $v_i(t)=dx_i/dt$ — его скорость, а $s_i(t)= x_{i-1}(t)- x_i(t)- L$ — дистанция до лидирующего автомобиля, где $L$ — длина автомобиля. Определим относительную скорость как $\Delta v_i= v_i- v_{i-1}$.
+
+Модель Enhanced Intelligent Driver Model (EIDM) \cite{treiber2013,kesting2010} описывает динамику движения автомобиля через уравнение ускорения:
+\begin{equation}
+\label{eq:eidm}
+\frac{dv_i}{dt} = a \left[1 - \left(\frac{v_i}{v_0}\right)^\delta - \left( \frac{s^*(v_i, \Delta v_i)}{s_i} \right)^2 \right],
+\end{equation}
+где функция желаемой дистанции имеет вид:
+\begin{equation}
+\label{eq:s_star}
+s^*(v_i, \Delta v_i)= s_0 + T \cdot v_i + \frac{v_i \cdot (-\Delta v_i)}{2 \sqrt{a b}}.
+\end{equation}
+
+Параметры модели имеют следующий физический смысл:
+\begin{itemize}
+    \item $a$ — комфортное ускорение,
+    \item $b$ — комфортное торможение,
+    \item $s_0$ — минимальный безопасный зазор,
+    \item $T$ — желаемый временной интервал между автомобилями,
+    \item $v_0$ — желаемая скорость движения,
+    \item $\delta$ — показатель степени, определяющий форму функции ускорения (обычно $\delta=4$).
+\end{itemize}
+
+Физический смысл модели заключается в следующем: при низкой скорости ($v_i \ll v_0$) автомобиль интенсивно ускоряется, при приближении к желаемой скорости ($v_i \sim v_0$) интенсивность разгона уменьшается, а при сокращении дистанции ($s_i < s^*(...)$) возникает торможение. Подробное описание модели и её свойств приведено в работах \cite{treiber2013,helbing2001}.
+
+\section{Равновесное состояние}
+\label{sec:equilibrium}
+
+\subsection{Условия стационарности}
+\label{subsec:equilibrium_conditions}
+
+В стационарном режиме движения выполняются следующие условия:
+\begin{itemize}
+    \item ускорение равно нулю: $dv_i/dt=0$,
+    \item относительная скорость отсутствует: $\Delta v_i=0$.
+\end{itemize}
+
+Подставляя $dv_i/dt=0$ в уравнение EIDM (\ref{eq:eidm}), получаем:
+\begin{equation}
+\label{eq:equilibrium_eidm}
+0 = a \left[1 - \left(\frac{v_e}{v_0}\right)^\delta - \left( \frac{s^*(v_e,0)}{s_e} \right)^2 \right].
+\end{equation}
+
+При $\Delta v=0$ функция желаемой дистанции упрощается: $s^*(v_e,0)= s_0+ T\cdot v_e$. Следовательно, равновесное состояние описывается уравнением:
+\begin{equation}
+\label{eq:equilibrium_final}
+\left(\frac{v_e}{v_0}\right)^\delta + \left[ \frac{s_0+ T\cdot v_e}{s_e} \right]^2= 1.
+\end{equation}
+
+Здесь $v_e$ и $s_e$ — равновесные скорость и дистанция соответственно. В случае свободного потока выполняется приближение $s_e \approx s_0+ T\cdot v_e$.
+
+\subsection{Интерпретация равновесного состояния}
+\label{subsec:equilibrium_interpretation}
+
+Равновесное состояние характеризуется балансом двух факторов:
+\begin{itemize}
+    \item Член $(v_e/v_0)^\delta$ отражает стремление водителя достичь желаемой скорости.
+    \item Член $\left[ (s_0+ T\cdot v_e)/ s_e\right]^2$ характеризует влияние плотности потока на движение.
+\end{itemize}
+
+Если $v_e< v_0$, автомобиль стремится ускориться, но это стремление ограничивается необходимостью поддерживать безопасную дистанцию.
+
+\section{ Линеаризация и анализ устойчивости (исправлено)}
+
+Рассматривается функция ускорения
+\[
+F(v,s,\Delta v)=
+a\Bigl[1-\Bigl(\frac{v}{v_0}\Bigr)^{\delta}-\Bigl(\frac{s^\ast(v,\Delta v)}{s}\Bigr)^{2}\Bigr],
+\qquad
+s^\ast(v,\Delta v)=s_0+T\,v+\frac{v(-\Delta v)}{2\sqrt{ab}} ,
+\]
+где $a,b,s_0,T,v_0,\delta$ – параметры модели.
+
+
+Введём малые возмущения
+\[
+v_i(t)=v_e+\delta v_i(t), \qquad 
+s_i(t)=s_e+\delta s_i(t), \qquad
+\Delta v_i(t)=\delta v_i(t)-\delta v_{i-1}(t).
+\]
+
+\subsection{ Частные производные функции ускорения}
+
+Обозначим 
+\[
+\varphi=\Bigl(\frac{v}{v_0}\Bigr)^{\delta}, \qquad 
+\psi=\Bigl(\frac{s^\ast}{s}\Bigr)^{2}.
+\]
+Тогда $F=a(1-\varphi-\psi)$.
+
+\paragraph{Производная по дистанции $s$.}
+Так как $s^\ast$ не зависит от $s$, имеем
+\[
+\frac{\partial \psi}{\partial s}=
+\frac{\partial }{\partial s}\frac{(s^\ast)^2}{s^{2}}
+=-2\frac{(s^\ast)^2}{s^{3}},
+\qquad
+\boxed{%
+	C=\Bigl.\frac{\partial F}{\partial s}\Bigr|_{e}
+	=2a\,\frac{(s_0+Tv_e)^2}{s_e^{3}}}>0 \]
+
+\paragraph{Производная по скорости $v$.}
+\[
+\frac{\partial \varphi}{\partial v}
+=\frac{\delta}{v}\Bigl(\frac{v}{v_0}\Bigr)^{\delta}
+=\frac{\delta}{v}\varphi.
+\]
+\[
+\frac{\partial s^\ast}{\partial v}=T-\frac{\Delta v}{2\sqrt{ab}}
+\;\xrightarrow{\;\Delta v=0\;}\;T .
+\]
+\[
+\frac{\partial \psi}{\partial v}
+=2\frac{s^\ast}{s^{2}}\frac{\partial s^\ast}{\partial v}
+=2T\,\frac{s^\ast}{s^{2}} .
+\]
+Отсюда
+\[
+\boxed{%
+A=\Bigl.\frac{\partial F}{\partial v}\Bigr|_{e}
+=-a\Bigl[
+\frac{\delta}{v_e}\Bigl(\frac{v_e}{v_0}\Bigr)^{\delta}
++2T\,\frac{s_0+Tv_e}{s_e^{2}}
+\Bigr]}.
+\]
+
+\paragraph{Производная по относительной скорости $\Delta v$.}
+\[
+\frac{\partial s^\ast}{\partial\Delta v}=-\frac{v}{2\sqrt{ab}},\qquad
+\frac{\partial \psi}{\partial \Delta v}
+=2\frac{s^\ast}{s^{2}}\frac{\partial s^\ast}{\partial\Delta v}
+=-\frac{v\,s^\ast}{\sqrt{ab}\,s^{2}} .
+\]
+Следовательно
+\[
+\boxed{%
+B=\Bigl.\frac{\partial F}{\partial\Delta v}\Bigr|_{e}
+=a\,\frac{v_e\,(s_0+Tv_e)}{\sqrt{ab}\,s_e^{2}} }.
+\]
+
+\subsection{ Линеаризованные уравнения}
+
+Принимая
+\[
+\delta s_i=\delta x_{i-1}-\delta x_i,\qquad
+\Delta v_i=\delta v_i-\delta v_{i-1},
+\]
+получаем систему
+\[
+\boxed{%
+\dot{\delta v_i}=A\,\delta v_i
++B\,(\delta v_i-\delta v_{i-1})
++C\,\delta s_i },\qquad
+\dot{\delta s_i}= \delta v_{i-1}-\delta v_i .
+\]
+
+\subsection{ Волновой анализ устойчивости}
+
+Рассмотрим гармонические возмущения:
+\[
+\delta v_i = S\,e^{\lambda t} e^{i k i}, \qquad \delta x_i = R\,e^{\lambda t} e^{i k i}, \qquad k \in [-\pi, \pi].
+\]
+Подстановка даёт характеристическое уравнение:
+\[
+\boxed{
+	\lambda^2 - e^{-\lambda \tau_r} \left[G(k)\lambda + H(k)\right] = 0,
+}
+\qquad\text{где}
+\begin{cases}
+	G(k) = A + B(1 - e^{-ik}),\\
+	H(k) = C(e^{ik} - 1).
+\end{cases}
+\]
+
+Наиболее критичная волна: $k = \pi$, тогда $e^{ik} = -1$, $1 - e^{-ik} = 2$,
+и обозначим $D = A + 2B$. Тогда:
+\[
+G_\pi = D, \qquad H_\pi = -2C.
+\]
+
+Пусть на границе устойчивости $\lambda = i\omega$, где $\omega \in \mathbb{R}^+$.
+Тогда вещественная и мнимая части:
+\[
+\begin{aligned}
+	\omega D &= -\omega^2 \sin(\omega \tau_r),\\
+	2C &= \omega^2 \cos(\omega \tau_r).
+\end{aligned}
+\]
+
+Из второго уравнения:
+\[
+\omega^2 = \tfrac{1}{2} \left[ D^2 + \sqrt{D^4 + 16C^2} \right].
+\]
+Отсюда критическое значение времени реакции:
+\[
+\boxed{
+	\tau_{\mathrm{cr}} = \frac{1}{\omega} \arccos\left(\frac{2C}{\omega^2}\right), \quad \omega \text{ — как выше}.
+}
+\]
+
+\subsection{ Условия устойчивости}
+
+Система устойчива тогда и только тогда, когда:
+\[
+\boxed{
+	C > 0, \quad D = A + 2B < 0, \quad \tau_r < \tau_{\mathrm{cr}}.
+}
+\]
+
+Для грубой оценки можно использовать приближение:
+\[
+\tau_r \lesssim \frac{|D|}{2C},
+\]
+которое даёт консервативную границу устойчивости.
+
+\subsection*{Вывод}
+Введение времени реакции существенно снижает устойчивость потока.
+Даже при отрицательном $D$ и положительном $C$, избыточная задержка $\tau_r$ может вызвать возникновение колебаний типа stop-and-go. Расчёт критического значения $\tau_{\mathrm{cr}}$ позволяет оценить, насколько быстро должен реагировать водитель для поддержания стабильного режима движения.

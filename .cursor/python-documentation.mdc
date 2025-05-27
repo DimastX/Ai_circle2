@@ -1,0 +1,9 @@
+---
+description: 
+globs: **/*.py
+alwaysApply: false
+---
+- Require documentation for all code.
+- Use docstrings for documentation.
+- Follow the Google Python Style Guide for documentation.
+- Update CODEBASE_STRUCTURE.md and README.md after major implementations

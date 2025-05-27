@@ -260,7 +260,7 @@ def analyze_circle_data(results_dir, L=None, warmup_time=0.0):
     # --- Фильтрация Warmup Time --- 
     if df is not None and not df.empty and 'time' in df.columns: # Убедимся, что df пригоден для использования
         initial_rows_fcd = len(df)
-        if warmup_time > 0:
+        if warmup_time < 0:
             # Фильтруем строки FCD, где время меньше warmup_time.
             # Это предполагает, что warmup_time - это абсолютное значение от начала симуляции (0с).
             df = df[df['time'] >= warmup_time].copy()

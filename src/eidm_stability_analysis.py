@@ -1573,65 +1573,46 @@ def collect_data_for_param_sweep(
     Строит графики результатов параметрического анализа устойчивости IDM,
     показывая влияние одного варьируемого параметра на равновесные состояния и их устойчивость.
 
-    График состоит из трех субграфиков, расположенных вертикально:
+    График состоит из четырех субграфиков, расположенных вертикально:
 
     1.  **Верхний график: Зависимость $v^*$ и $s^*_{net}$ от варьируемого параметра**
         -   Ось X: Значения варьируемого параметра (например, время реакции T).
         -   Левая ось Y: Равновесная скорость $v^*$ (км/ч).
         -   Правая ось Y: Равновесный чистый зазор $s^*_{net}$ (м).
-        -   Если для одного значения варьируемого параметра существует несколько
-            равновесных состояний (например, при фиксированном потоке $Q$, что дает
-            нижнюю и верхнюю ветви фундаментальной диаграммы), они отображаются
-            разными цветами/маркерами:
-            -   **Нижняя ветвь (или единственное состояние):**
-                -   $v^*$: красные кружки ('red', 'o').
-                -   $s^*_{net}$: темно-красные крестики ('darkred', 'x').
-            -   **Верхняя ветвь:**
-                -   $v^*$: синие кружки ('blue', 'o').
-                -   $s^*_{net}$: темно-синие крестики ('darkblue', 'x').
-            -   **Единственное состояние (если ветвей нет):**
-                -   $v^*$: черные кружки ('black', 'o').
-                -   $s^*_{net}$: темно-серые крестики ('dimgray', 'x').
+        -   Отображение ветвей (нижняя/верхняя/единственная) с разными цветами/маркерами.
 
-    2.  **Средний график: Критерий K от варьируемого параметра**
+    2.  **Второй график: Критерий K от варьируемого параметра**
         -   Ось X: Значения варьируемого параметра.
         -   Ось Y: Значение критерия $K = f_v^2/2 - f_{\Delta v}f_v - f_s$.
-        -   Отображает $K$ для каждой ветви равновесных состояний:
-            -   Нижняя ветвь: красно-оранжевая линия ('salmon').
-            -   Верхняя ветвь: светло-синяя линия ('skyblue').
-            -   Единственное состояние: серая линия ('gray').
-        -   Горизонтальная линия на уровне $K=0$ показывает границу теоретической
-            устойчивости потока ($K>0$ означает устойчивость).
+        -   Отображает $K$ для каждой ветви. Горизонтальная линия на $K=0$.
+        -   Этот критерий полезен для систем без запаздывания.
 
-    3.  **Нижний график: Устойчивость потока по ветвям от варьируемого параметра**
+    3.  **Третий график: $\\max Re(\\lambda(k))$ от варьируемого параметра**
+        -   Ось X: Значения варьируемого параметра.
+        -   Ось Y: Максимальная действительная часть собственных значений $\\max Re(\\lambda(k))$.
+        -   Отображает $\\max Re(\\lambda(k))$ для каждой ветви.
+        -   Горизонтальная линия на уровне $y=0$ показывает границу устойчивости
+            (значения < 0 соответствуют устойчивости потока с учетом запаздывания).
+
+    4.  **Нижний (четвертый) график: Устойчивость потока по ветвям от варьируемого параметра**
         -   Ось X: Значения варьируемого параметра.
         -   Ось Y: Два уровня, представляющие нижнюю/единственную и верхнюю ветви.
-        -   **Теоретическая устойчивость потока (String Stability по критерию K):**
-            -   Отображается закрашенными квадратами ('s') на соответствующем уровне ветви.
-            -   Зеленый квадрат: Теоретически устойчиво ($K>0$ и рац. вождение).
-            -   Красный квадрат: Теоретически неустойчиво ($K \le 0$ или не рац. вождение).
+        -   **Теоретическая устойчивость потока (на основе $\\max Re(\\lambda(k))$):**
+            -   Зеленый квадрат: Теоретически устойчиво ($\\max Re(\\lambda(k)) < 0$).
+            -   Красный квадрат: Теоретически неустойчиво ($\\max Re(\\lambda(k)) \\ge 0$).
         -   **Экспериментальная устойчивость (из результатов симуляций SUMO, если предоставлены):**
-            -   Отображается большими крестами ('X') поверх теоретических маркеров,
-                на соответствующем уровне ветви, к которой относится симуляция.
-            -   Ярко-зеленый крест ('lime', edgecolor='darkgreen'): Экспериментально устойчиво
-                (волны не наблюдались в симуляции).
-            -   Томатный крест ('tomato', edgecolor='darkred'): Экспериментально неустойчиво
-                (волны наблюдались в симуляции).
-        -   Присутствует легенда, поясняющая маркеры теоретической и экспериментальной устойчивости.
+            -   Ярко-зеленый крест: Экспериментально устойчиво.
+            -   Томатный крест: Экспериментально неустойчиво.
+        -   Присутствует легенда, поясняющая маркеры.
 
     Args:
         data (dict): Данные, собранные функцией `collect_data_for_param_sweep`.
-        swept_param_key (str): Ключ варьируемого параметра IDM (например, 'T_safe_time_headway').
-        swept_param_label (str): Метка для оси X (например, "Время реакции T (с)").
-        fixed_condition_label (str): Описание фиксированного условия (например, "Q = 1800 авто/час").
-        base_params (dict): Базовый набор параметров IDM (используется для общего заголовка графика).
-        simulation_results (list[dict], optional): Список словарей с результатами
-                                                  симуляций SUMO. Каждый словарь должен
-                                                  содержать как минимум ключ варьируемого
-                                                  параметра (например, 'T'), 'v_star' (м/с)
-                                                  соответствующей теоретической точки равновесия,
-                                                  и 'waves_observed' (bool).
-                                                  Defaults to None.
+                     Должен содержать 'lambda_max_theory'.
+        swept_param_key (str): Ключ варьируемого параметра IDM.
+        swept_param_label (str): Метка для оси X.
+        fixed_condition_label (str): Описание фиксированного условия.
+        base_params (dict): Базовый набор параметров IDM.
+        simulation_results (list[dict], optional): Список результатов симуляций SUMO.
     """
 def plot_stability_for_parameter_sweep(data, swept_param_key, swept_param_label, fixed_condition_label, base_params, simulation_results=None):
     if len(data['param_values']) == 0:
@@ -1642,77 +1623,76 @@ def plot_stability_for_parameter_sweep(data, swept_param_key, swept_param_label,
     for i, param_val in enumerate(data['param_values']):
         if param_val not in grouped_data:
             grouped_data[param_val] = []
-        # Убедимся, что K_condition и string_stable собираются 
         grouped_data[param_val].append({
             'v_star': data['v_star'][i],
             's_star_net': data['s_star_net'][i],
-            'K_condition': data['K_condition'][i], # K используется для определения ss_lower/upper
+            'K_condition': data['K_condition'][i],
             'platoon_stable': data['platoon_stable'][i],
-            'string_stable': data['string_stable'][i], # Это флаг теор. уст-ти (K>0 при рац. вожд.)
-            'lambda_max_theory': data['lambda_max_theory'][i] if 'lambda_max_theory' in data else float('nan') 
+            'string_stable_K': data['string_stable'][i], # Устойчивость по K
+            'lambda_max_theory': data['lambda_max_theory'][i] if 'lambda_max_theory' in data else float('nan')
         })
 
-    # Собираем данные для каждой ветви, включая K_condition и string_stable
-    param_x_lower, v_lower, s_net_lower, k_lower, ps_lower, ss_lower = [], [], [], [], [], []
-    param_x_upper, v_upper, s_net_upper, k_upper, ps_upper, ss_upper = [], [], [], [], [], []
-    param_x_single, v_single, s_net_single, k_single, ps_single, ss_single = [], [], [], [], [], []
-    # lambda_theory_* больше не нужны для этих графиков, но оставим их сбор, если они используются где-то еще
-    lambda_theory_lower, lambda_theory_upper, lambda_theory_single = [], [], [] 
+    param_x_lower, v_lower, s_net_lower, k_lower, lambda_theory_lower, théor_stable_lower = [], [], [], [], [], []
+    param_x_upper, v_upper, s_net_upper, k_upper, lambda_theory_upper, théor_stable_upper = [], [], [], [], [], []
+    param_x_single, v_single, s_net_single, k_single, lambda_theory_single, théor_stable_single = [], [], [], [], [], []
 
     unique_param_values_sorted = sorted(grouped_data.keys())
 
     for param_val in unique_param_values_sorted:
         states = grouped_data[param_val]
-        valid_states = [s for s in states if not math.isnan(s['v_star']) and not math.isnan(s['s_star_net'])]
+        valid_states = [s for s in states if not (math.isnan(s['v_star']) or math.isnan(s['s_star_net']) or math.isnan(s['lambda_max_theory']))]
         
         if not valid_states:
             continue
+
+        # Определяем теоретическую устойчивость на основе lambda_max_theory
+        for state in valid_states:
+            state['theor_stable_lambda'] = state['lambda_max_theory'] < 0 if not math.isnan(state['lambda_max_theory']) else False
 
         if len(valid_states) == 1:
             state = valid_states[0]
             param_x_single.append(param_val)
             v_single.append(state['v_star'])
             s_net_single.append(state['s_star_net'])
-            k_single.append(state['K_condition']) 
-            ps_single.append(state['platoon_stable'])
-            ss_single.append(state['string_stable']) # Собираем string_stable (теор. уст.)
-            lambda_theory_single.append(state.get('lambda_max_theory', float('nan')))
+            k_single.append(state['K_condition'])
+            lambda_theory_single.append(state['lambda_max_theory'])
+            théor_stable_single.append(state['theor_stable_lambda'])
         elif len(valid_states) >= 2:
-            valid_states.sort(key=lambda x: x['v_star'])
+            valid_states.sort(key=lambda x: x['v_star']) # Сортируем по v_star чтобы определить нижнюю и верхнюю ветви
             lower_state = valid_states[0]
             upper_state = valid_states[-1]
             
             param_x_lower.append(param_val)
             v_lower.append(lower_state['v_star'])
             s_net_lower.append(lower_state['s_star_net'])
-            k_lower.append(lower_state['K_condition']) 
-            ps_lower.append(lower_state['platoon_stable'])
-            ss_lower.append(lower_state['string_stable']) # Собираем string_stable (теор. уст.)
-            lambda_theory_lower.append(lower_state.get('lambda_max_theory', float('nan')))
+            k_lower.append(lower_state['K_condition'])
+            lambda_theory_lower.append(lower_state['lambda_max_theory'])
+            théor_stable_lower.append(lower_state['theor_stable_lambda'])
 
             param_x_upper.append(param_val)
             v_upper.append(upper_state['v_star'])
             s_net_upper.append(upper_state['s_star_net'])
-            k_upper.append(upper_state['K_condition']) 
-            ps_upper.append(upper_state['platoon_stable'])
-            ss_upper.append(upper_state['string_stable']) # Собираем string_stable (теор. уст.)
-            lambda_theory_upper.append(upper_state.get('lambda_max_theory', float('nan')))
+            k_upper.append(upper_state['K_condition'])
+            lambda_theory_upper.append(upper_state['lambda_max_theory'])
+            théor_stable_upper.append(upper_state['theor_stable_lambda'])
             
             if len(valid_states) > 2:
                  print(f"Предупреждение: найдено {len(valid_states)} состояний для {swept_param_key}={param_val}. Используются только нижнее и верхнее.")
 
     # Преобразуем в numpy массивы
-    param_x_lower, v_lower, s_net_lower, k_lower, ps_lower, ss_lower = np.array(param_x_lower), np.array(v_lower), np.array(s_net_lower), np.array(k_lower), np.array(ps_lower, dtype=bool), np.array(ss_lower, dtype=bool)
-    param_x_upper, v_upper, s_net_upper, k_upper, ps_upper, ss_upper = np.array(param_x_upper), np.array(v_upper), np.array(s_net_upper), np.array(k_upper), np.array(ps_upper, dtype=bool), np.array(ss_upper, dtype=bool)
-    param_x_single, v_single, s_net_single, k_single, ps_single, ss_single = np.array(param_x_single), np.array(v_single), np.array(s_net_single), np.array(k_single), np.array(ps_single, dtype=bool), np.array(ss_single, dtype=bool)
-    # lambda_theory_lower, lambda_theory_upper, lambda_theory_single = np.array(lambda_theory_lower), np.array(lambda_theory_upper), np.array(lambda_theory_single) # Не используются в этих графиках напрямую
+    param_x_lower, v_lower, s_net_lower, k_lower, lambda_theory_lower, théor_stable_lower = \
+        np.array(param_x_lower), np.array(v_lower), np.array(s_net_lower), np.array(k_lower), np.array(lambda_theory_lower), np.array(théor_stable_lower, dtype=bool)
+    param_x_upper, v_upper, s_net_upper, k_upper, lambda_theory_upper, théor_stable_upper = \
+        np.array(param_x_upper), np.array(v_upper), np.array(s_net_upper), np.array(k_upper), np.array(lambda_theory_upper), np.array(théor_stable_upper, dtype=bool)
+    param_x_single, v_single, s_net_single, k_single, lambda_theory_single, théor_stable_single = \
+        np.array(param_x_single), np.array(v_single), np.array(s_net_single), np.array(k_single), np.array(lambda_theory_single), np.array(théor_stable_single, dtype=bool)
 
-    fig, axs = plt.subplots(3, 1, figsize=(12, 15), sharex=True) # Изменено на 3 субплота, скорректирован размер
+    fig, axs = plt.subplots(4, 1, figsize=(12, 18), sharex=True) # Изменено на 4 субплота
 
-    # --- График axs[0]: v* и s*_net (как и был) ---
+    # --- График axs[0]: v* и s*_net (без изменений) ---
     ax0 = axs[0]
     ax0_twin = ax0.twinx()
-    handles0, labels0 = [], [] # Собираем handles/labels для объединенной легенды
+    handles0, labels0 = [], []
     if len(param_x_lower) > 0:
         h_v_l = ax0.scatter(param_x_lower, v_lower * 3.6, marker='o', s=25, alpha=0.7, color='red', label='v* (Нижн. ветвь, км/ч)')
         h_s_l = ax0_twin.scatter(param_x_lower, s_net_lower, marker='x', s=25, alpha=0.7, color='darkred', label='s*_net (Нижн. ветвь, м)')
@@ -1731,7 +1711,7 @@ def plot_stability_for_parameter_sweep(data, swept_param_key, swept_param_label,
     ax0.set_title(f'Зависимость v* и s*_net от {swept_param_label}')
     ax0.grid(True)
 
-    # --- График axs[1]: КРИТЕРИЙ K (остается без изменений) ---
+    # --- График axs[1]: КРИТЕРИЙ K (без изменений) ---
     ax_k_plot = axs[1]
     handles_k, labels_k = [], []
     if len(param_x_lower) > 0 and len(k_lower) == len(param_x_lower):
@@ -1743,61 +1723,86 @@ def plot_stability_for_parameter_sweep(data, swept_param_key, swept_param_label,
     if len(param_x_single) > 0 and len(k_single) == len(param_x_single):
         h = ax_k_plot.plot(param_x_single, k_single, linestyle='-', marker='.', color='gray', label='K (Единств.)')
         handles_k.append(h[0]); labels_k.append(h[0].get_label())
-    ax_k_plot.axhline(0, color='black', lw=0.8, linestyle='--') # K=0 - важный порог
+    ax_k_plot.axhline(0, color='black', lw=0.8, linestyle='--')
     ax_k_plot.set_ylabel('Критерий K')
-    ax_k_plot.set_title(f'Критерий K от {swept_param_label}')
+    ax_k_plot.set_title(f'Критерий K от {swept_param_label} (без учета запаздывания)')
     if handles_k: ax_k_plot.legend(handles=handles_k, labels=labels_k, fontsize='small', loc='best')
     ax_k_plot.grid(True)
 
-    # --- График axs[2]: УСТОЙЧИВОСТЬ ПО ВЕТВЯМ СКОРОСТЕЙ (ранее axs[3]) ---
-    ax_branch_stability = axs[2] # Теперь это axs[2]
-    # branch_stability_handles, branch_stability_labels = [], [] # Больше не нужны для сборки сложных ручных легенд
-    ax_branch_stability.set_title(f'Устойчивость по ветвям от {swept_param_label}')
+    # --- НОВЫЙ График axs[2]: max Re(lambda(k)) ---
+    ax_lambda_plot = axs[2]
+    handles_lambda, labels_lambda = [], []
+    if len(param_x_lower) > 0 and len(lambda_theory_lower) == len(param_x_lower):
+        h = ax_lambda_plot.plot(param_x_lower, lambda_theory_lower, linestyle='-', marker='.', color='coral', label='$\\max Re(\\lambda(k))$ (Нижн. ветвь)')
+        handles_lambda.append(h[0]); labels_lambda.append(h[0].get_label())
+    if len(param_x_upper) > 0 and len(lambda_theory_upper) == len(param_x_upper):
+        h = ax_lambda_plot.plot(param_x_upper, lambda_theory_upper, linestyle='-', marker='.', color='deepskyblue', label='$\\max Re(\\lambda(k))$ (Верхн. ветвь)')
+        handles_lambda.append(h[0]); labels_lambda.append(h[0].get_label())
+    if len(param_x_single) > 0 and len(lambda_theory_single) == len(param_x_single):
+        h = ax_lambda_plot.plot(param_x_single, lambda_theory_single, linestyle='-', marker='.', color='darkgrey', label='$\\max Re(\\lambda(k))$ (Единств.)')
+        handles_lambda.append(h[0]); labels_lambda.append(h[0].get_label())
+    ax_lambda_plot.axhline(0, color='black', lw=0.8, linestyle='--') # Условие устойчивости: max Re(lambda) < 0
+    ax_lambda_plot.set_ylabel('$\\max Re(\\lambda(k))$')
+    ax_lambda_plot.set_title(f'Теоретический инкремент $\\max Re(\\lambda(k))$ от {swept_param_label} (с учетом запаздывания)')
+    if handles_lambda: ax_lambda_plot.legend(handles=handles_lambda, labels=labels_lambda, fontsize='small', loc='best')
+    ax_lambda_plot.grid(True)
+
+    # --- График axs[3]: УСТОЙЧИВОСТЬ ПО ВЕТВЯМ СКОРОСТЕЙ (ранее axs[2], теперь axs[3]) ---
+    # Теоретическая устойчивость теперь определяется théor_stable_lower/upper/single (из lambda_max_theory < 0)
+    ax_branch_stability = axs[3]
+    ax_branch_stability.set_title(f'Устойчивость по ветвям от {swept_param_label} (Теория по $\\max Re(\\lambda(k))$)')
     y_lower_branch, y_upper_branch = 0.3, 0.7
     ax_branch_stability.set_yticks([y_lower_branch, y_upper_branch])
     ax_branch_stability.set_yticklabels(['Нижняя/Единств. ветвь', 'Верхняя ветвь'])
     ax_branch_stability.set_ylim(0, 1)
 
-    # Теория для ветвей - убираем индивидуальные label для scatter
+    # Теория для ветвей (используем théor_stable_*)
     if len(param_x_lower) > 0:
-        ax_branch_stability.scatter(param_x_lower[ss_lower], np.ones(np.sum(ss_lower)) * y_lower_branch, marker='s', s=60, color='green')
-        ax_branch_stability.scatter(param_x_lower[~ss_lower], np.ones(np.sum(~ss_lower)) * y_lower_branch, marker='s', s=60, color='red')
+        ax_branch_stability.scatter(param_x_lower[théor_stable_lower], np.ones(np.sum(théor_stable_lower)) * y_lower_branch, marker='s', s=60, color='green')
+        ax_branch_stability.scatter(param_x_lower[~théor_stable_lower], np.ones(np.sum(~théor_stable_lower)) * y_lower_branch, marker='s', s=60, color='red')
     if len(param_x_upper) > 0:
-        ax_branch_stability.scatter(param_x_upper[ss_upper], np.ones(np.sum(ss_upper)) * y_upper_branch, marker='s', s=60, color='green')
-        ax_branch_stability.scatter(param_x_upper[~ss_upper], np.ones(np.sum(~ss_upper)) * y_upper_branch, marker='s', s=60, color='red')
-    if len(param_x_single) > 0: 
-        ax_branch_stability.scatter(param_x_single[ss_single], np.ones(np.sum(ss_single)) * y_lower_branch, marker='s', s=60, color='green')
-        ax_branch_stability.scatter(param_x_single[~ss_single], np.ones(np.sum(~ss_single)) * y_lower_branch, marker='s', s=60, color='red')
+        ax_branch_stability.scatter(param_x_upper[théor_stable_upper], np.ones(np.sum(théor_stable_upper)) * y_upper_branch, marker='s', s=60, color='green')
+        ax_branch_stability.scatter(param_x_upper[~théor_stable_upper], np.ones(np.sum(~théor_stable_upper)) * y_upper_branch, marker='s', s=60, color='red')
+    if len(param_x_single) > 0:
+        ax_branch_stability.scatter(param_x_single[théor_stable_single], np.ones(np.sum(théor_stable_single)) * y_lower_branch, marker='s', s=60, color='green')
+        ax_branch_stability.scatter(param_x_single[~théor_stable_single], np.ones(np.sum(~théor_stable_single)) * y_lower_branch, marker='s', s=60, color='red')
         
-    # Эксперимент для ветвей - убираем индивидуальные label для scatter
+    # Эксперимент для ветвей (логика не изменилась)
     if simulation_results and any(simulation_results):
         exp_lower_stable_x, exp_lower_unstable_x = [], []
         exp_upper_stable_x, exp_upper_unstable_x = [], []
 
         for sim_res in simulation_results:
-            param_val_sim = sim_res.get(swept_param_key) or sim_res.get('T')
-            v_star_sim = sim_res.get('v_star')
+            param_val_sim = sim_res.get(swept_param_key) or sim_res.get('T') # 'T' как fallback
+            v_star_sim = sim_res.get('v_star') # м/с
             waves_sim = sim_res.get('waves_observed')
 
             if param_val_sim is None or v_star_sim is None or waves_sim is None:
                 continue
 
-            theoretical_states = grouped_data.get(param_val_sim, [])
-            target_y_level = None
-            # branch_label_suffix = '' # Больше не нужен для легенды
+            # Находим, к какой теоретической ветви ближе v_star из симуляции
+            theoretical_states_for_param_val = grouped_data.get(param_val_sim, [])
+            
+            # Отфильтруем состояния без v_star
+            theoretical_states_for_param_val = [s for s in theoretical_states_for_param_val if not math.isnan(s['v_star'])]
+            
+            if not theoretical_states_for_param_val: continue # Нет валидных теоретических состояний для этого param_val
 
-            if len(theoretical_states) == 1:
-                target_y_level = y_lower_branch 
-                # branch_label_suffix = ' (Единств.)'
-            elif len(theoretical_states) >= 2:
-                lower_th_v = theoretical_states[0]['v_star'] 
-                upper_th_v = theoretical_states[-1]['v_star']
-                if abs(v_star_sim - lower_th_v) < abs(v_star_sim - upper_th_v) or abs(v_star_sim - lower_th_v) < 1e-3: 
+            target_y_level = None
+            if len(theoretical_states_for_param_val) == 1:
+                target_y_level = y_lower_branch
+            elif len(theoretical_states_for_param_val) >= 2:
+                # Сортируем по v_star, если еще не отсортированы (хотя grouped_data уже должен быть)
+                theoretical_states_for_param_val.sort(key=lambda x: x['v_star'])
+                lower_th_v = theoretical_states_for_param_val[0]['v_star']
+                upper_th_v = theoretical_states_for_param_val[-1]['v_star']
+                
+                # Если v_star симуляции ближе к нижней ветви или практически совпадает
+                if abs(v_star_sim - lower_th_v) < abs(v_star_sim - upper_th_v) or \
+                   abs(v_star_sim - lower_th_v) < 1e-2: # Допуск для сравнения скоростей
                     target_y_level = y_lower_branch
-                    # branch_label_suffix = ' (Нижн.)'
                 else:
                     target_y_level = y_upper_branch
-                    # branch_label_suffix = ' (Верхн.)'
             
             if target_y_level is not None:
                 if not waves_sim: 
@@ -1817,14 +1822,15 @@ def plot_stability_for_parameter_sweep(data, swept_param_key, swept_param_label,
             ax_branch_stability.scatter(exp_upper_unstable_x, np.ones(len(exp_upper_unstable_x)) * y_upper_branch, marker='X', s=100, color='tomato', edgecolor='darkred')
 
     # Создание кастомной легенды для ax_branch_stability
-    legend_handles = [
-        plt.Line2D([0], [0], marker='s', color='w', label='Теория: Уст.', markersize=10, markerfacecolor='green'),
-        plt.Line2D([0], [0], marker='s', color='w', label='Теория: Неуст.', markersize=10, markerfacecolor='red'),
+    legend_handles_branch_stability = [
+        plt.Line2D([0], [0], marker='s', color='w', label='Теория ($\lambda_{max}<0$): Уст.', markersize=10, markerfacecolor='green'),
+        plt.Line2D([0], [0], marker='s', color='w', label='Теория ($\lambda_{max}\\geq0$): Неуст.', markersize=10, markerfacecolor='red'),
         plt.Line2D([0], [0], marker='X', color='w', label='Эксперимент: Уст.', markersize=10, markerfacecolor='lime', markeredgecolor='darkgreen'),
         plt.Line2D([0], [0], marker='X', color='w', label='Эксперимент: Неуст.', markersize=10, markerfacecolor='tomato', markeredgecolor='darkred')
     ]
-    ax_branch_stability.legend(handles=legend_handles, fontsize='small', loc='best', ncol=2)
+    ax_branch_stability.legend(handles=legend_handles_branch_stability, fontsize='small', loc='best', ncol=2)
     ax_branch_stability.grid(True, axis='x')
+    ax_branch_stability.set_xlabel(swept_param_label) # Добавляем метку X и сюда
 
     # Общий заголовок и компоновка
     param_details_list = []
@@ -1896,7 +1902,7 @@ def main(): # Обернем основной код в функцию main()
     default_sumo_exe_path = "sumo-gui.exe" 
     if "SUMO_HOME" in os.environ:
         # Сначала ищем sumo-gui.exe
-        potential_gui_path = os.path.join(os.getenv("SUMO_HOME"), "bin", "sumo-gui.exe")
+        potential_gui_path = os.path.join(os.getenv("SUMO_HOME"), "bin", "sumo.exe")
         if os.path.isfile(potential_gui_path):
             default_sumo_exe_path = potential_gui_path
         else:
@@ -2006,7 +2012,7 @@ def main(): # Обернем основной код в функцию main()
     # Пример 4: Варьирование 'a' (макс. ускорение) при фиксированной v*
     print("\n--- Графики: Варьирование 'a' (макс. ускорение) при фикс. v* ---")
     fixed_v_for_a_sweep = 20.0  # м/с
-    a_sweep_values = np.linspace(0.3, 2.0, 50) 
+    a_sweep_values = np.linspace(0.5, 2.5, 50) 
     data_sweep_a_fixed_v = collect_data_for_param_sweep(
         param_to_sweep_key='a_max_accel', sweep_values=a_sweep_values,
         base_idm_params=params.copy(), fixed_v_star=fixed_v_for_a_sweep, verbose=False
@@ -2027,7 +2033,7 @@ def main(): # Обернем основной код в функцию main()
     target_Q_veh_per_hour = 1800 
     target_Q_veh_per_sec = target_Q_veh_per_hour / 3600.0 
     # T_sweep_values_for_Q = np.linspace(0.8, 2.5, 50) # Старое значение
-    T_sweep_values_for_Q = np.linspace(0.8, 2.5, 10) # Уменьшено для ускорения тестов с SUMO
+    T_sweep_values_for_Q = np.linspace(0.8, 2.5, 50) # Уменьшено для ускорения тестов с SUMO
     
     data_sweep_T_fixed_Q = collect_data_for_param_sweep(
         param_to_sweep_key='T_safe_time_headway', 
