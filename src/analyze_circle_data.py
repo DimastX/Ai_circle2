@@ -371,17 +371,23 @@ def analyze_circle_data(results_dir, L=None, warmup_time=0.0):
     # --- Расчет метрик ---
     mean_speed_std_dev = 0.0
     waves_observed = False
+    mean_speed_overall = 0.0  # Добавляем среднюю скорость
     if not df.empty and 'time' in df.columns and 'speed' in df.columns:
         # Группируем по времени, считаем std скорости в каждый момент, затем усредняем эти std
         std_dev_per_timestep = df.groupby('time')['speed'].std(ddof=0) # ddof=0 для std по популяции
         mean_speed_std_dev = std_dev_per_timestep.mean() 
         if np.isnan(mean_speed_std_dev): mean_speed_std_dev = 0.0 # Если всего 1 машина или 1 шаг времени
         
+        # Рассчитываем среднюю скорость за всю симуляцию
+        mean_speed_overall = df['speed'].mean()
+        if np.isnan(mean_speed_overall): mean_speed_overall = 0.0
+        
         # Эвристический порог для определения волн
         wave_threshold = 0.5 # м/с
         waves_observed = mean_speed_std_dev > wave_threshold
         
         print(f"Среднее стандартное отклонение скорости по времени: {mean_speed_std_dev:.4f} м/с")
+        print(f"Средняя скорость за всю симуляцию: {mean_speed_overall:.4f} м/с")
         print(f"Наличие волн (std dev > {wave_threshold}): {'Да' if waves_observed else 'Нет'}")
     else:
         print("Недостаточно данных для расчета стандартного отклонения скорости.")
@@ -412,6 +418,20 @@ def analyze_circle_data(results_dir, L=None, warmup_time=0.0):
                  plt.plot(vehicle_data['time'], vehicle_data['speed'], 'b-', alpha=0.4, linewidth=0.8)
             elif i == 20:
                  plt.plot(vehicle_data['time'], vehicle_data['speed'], 'b-', alpha=0.4, linewidth=0.8, label='Другие машины (до 20-й)')
+    
+    # Добавляем VSL данные, если доступны
+    vsl_log_path = os.path.join(results_dir, "vsl_controller_log.csv")
+    if os.path.exists(vsl_log_path):
+        try:
+            vsl_df = pd.read_csv(vsl_log_path)
+            if 'sim_time_s' in vsl_df.columns and 'vsl_applied_speed_m_s' in vsl_df.columns:
+                vsl_time = vsl_df['sim_time_s']
+                vsl_speed = vsl_df['vsl_applied_speed_m_s']
+                plt.plot(vsl_time, vsl_speed, 'g-', linewidth=2, label='VSL скорость', alpha=0.8)
+                print(f"Добавлена VSL скорость на график V(t) ({len(vsl_df)} точек)")
+        except Exception as e:
+            print(f"Ошибка при загрузке VSL данных: {e}")
+    
     plt.title('Скорость от времени V(t)')
     plt.xlabel('Время (с)')
     plt.ylabel('Скорость (м/с)')
@@ -873,6 +893,7 @@ def analyze_circle_data(results_dir, L=None, warmup_time=0.0):
         'data_file': os.path.basename(fcd_csv_file_path),
         'ring_length_used': L if L is not None else (df['distance'].max() if not df.empty and 'distance' in df.columns else 0),
         'mean_speed_std_dev': mean_speed_std_dev,
+        'mean_speed_overall': mean_speed_overall,  # Добавляем среднюю скорость
         'waves_observed_threshold': wave_threshold,
         # Преобразуем numpy.bool_ в стандартный bool для JSON
         'waves_observed': bool(waves_observed),

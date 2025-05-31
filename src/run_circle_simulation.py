@@ -31,7 +31,7 @@ except ImportError:
 
 # Константы для детекторов
 RING_EDGE_ID = "a"  # ID кольцевого ребра из 1k.net.xml
-FIXED_RING_LENGTH = 901.53  # Длина кольца, как в eidm_stability_analysis.py
+FIXED_RING_LENGTH = 1000  # Длина кольца, как в eidm_stability_analysis.py
 DETECTOR_SPACING_M = 100.0  # Желаемое расстояние между детекторами
 DETECTOR_SAMPLING_PERIOD_S = 1.0  # Период опроса детекторов (Ts)
 DETECTOR_FILE_NAME = "detectors.add.xml" # Имя файла с детекторами
