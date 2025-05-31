@@ -245,7 +245,7 @@ def run_simulation(sumo_binary, temp_sumocfg_file, results_dir, config_name, tim
 
         print(f"TraCI: Успешно подключено к SUMO. Версия TraCI: {traci.getVersion()}")
 
-        # --- ИНИЦИАЛИЗАЦИЯ VSL CONTROLLER ПОСЛЕ TRACI.CONNECT ---
+        # -- ИНИЦИАЛИЗАЦИЯ VSL CONTROLLER ПОСЛЕ TRACI.CONNECT ---
         if vsl_init_params and VSL_CONTROLLER_AVAILABLE:
             try:
                 # Проверяем режим работы: сценарий или статические параметры
