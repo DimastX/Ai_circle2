@@ -12,6 +12,15 @@ import pandas as pd
 from scipy.signal import correlate as scipy_correlate, find_peaks
 import csv
 import logging
+import time
+
+# Добавляем импорт VSL оптимизатора
+try:
+    from vsl_calculator import VSLOptimizer, VSLParams
+except ImportError:
+    print("ПРЕДУПРЕЖДЕНИЕ: Модуль vsl_calculator недоступен. VSL анализ будет отключен.")
+    VSLOptimizer = None
+    VSLParams = None
 
 """
 Скрипт для анализа линейной устойчивости Интеллектуальной Модели Водителя (IDM).
@@ -1861,6 +1870,251 @@ DEFAULT_VSL_PARAMS = {
     "log_csv_filename": "vsl_controller_log.csv"
 }
 
+# +++ ДОБАВЛЕННЫЕ ФУНКЦИИ ДЛЯ VSL АНАЛИЗА +++
+
+def collect_vsl_scenario_data(T_prime_values, base_idm_params, scenario="speed", verbose=False):
+    """
+    Собирает данные для анализа VSL сценариев в зависимости от времени реакции водителя T'.
+    
+    Args:
+        T_prime_values: Массив значений времени реакции водителя (с)
+        base_idm_params: Базовые параметры IDM
+        scenario: Сценарий VSL ('speed', 'variance', 'wave', 'throughput')
+        verbose: Вывод отладочной информации
+        
+    Returns:
+        dict: Данные для анализа с ключами: 'T_prime', 'vsl_params', 'rho_crit', 'stability_data'
+    """
+    if VSLOptimizer is None:
+        print("VSL анализ недоступен - модуль vsl_calculator не найден")
+        return None
+        
+    data = {
+        'T_prime': [],
+        'vsl_params': [],
+        'rho_crit': [],
+        'kp': [],
+        'ki': [],
+        'kd': [],
+        'target_density': [],
+        'vsl_min': [],
+        'vsl_max': [],
+        'stability_margin': []
+    }
+    
+    for T_prime in T_prime_values:
+        try:
+            # Создаем VSL оптимизатор
+            vsl_optimizer = VSLOptimizer(T_prime, base_idm_params)
+            
+            # Получаем параметры для сценария
+            stability_data = None
+            if scenario == "variance":
+                # Для сценария variance нужны данные анализа устойчивости
+                # Используем средние значения для примера
+                stability_data = {
+                    'f_s': -1.0,  # Примерные значения
+                    'f_v': -0.5,
+                    'f_dv': -0.8
+                }
+            
+            vsl_params = vsl_optimizer.get_scenario_params(scenario, stability_data)
+            
+            # Сохраняем данные
+            data['T_prime'].append(T_prime)
+            data['vsl_params'].append(vsl_params)
+            data['rho_crit'].append(vsl_optimizer.rho_crit_base)
+            data['kp'].append(vsl_params.kp)
+            data['ki'].append(vsl_params.ki)
+            data['kd'].append(vsl_params.kd)
+            data['target_density'].append(vsl_params.target_density)
+            data['vsl_min'].append(vsl_params.vsl_bounds[0])
+            data['vsl_max'].append(vsl_params.vsl_bounds[1])
+            
+            # Расчет запаса устойчивости для сценария variance
+            if scenario == "variance" and stability_data:
+                margin = vsl_optimizer.calculate_stability_margin(
+                    stability_data['f_s'], stability_data['f_v'], stability_data['f_dv']
+                )
+                data['stability_margin'].append(margin)
+            else:
+                data['stability_margin'].append(0.0)
+                
+            if verbose:
+                print(f"T'={T_prime:.2f}: ρ_crit={vsl_optimizer.rho_crit_base:.2f}, "
+                      f"Kp={vsl_params.kp:.3f}, Ki={vsl_params.ki:.3f}, Kd={vsl_params.kd:.3f}")
+                
+        except Exception as e:
+            if verbose:
+                print(f"Ошибка для T'={T_prime:.2f}: {e}")
+            continue
+    
+    # Конвертируем в numpy массивы
+    for key in data:
+        if key != 'vsl_params':
+            data[key] = np.array(data[key])
+    
+    return data if len(data['T_prime']) > 0 else None
+
+
+def plot_vsl_scenario_analysis(data, scenario_name, save_plots=True):
+    """
+    Строит графики анализа VSL сценария.
+    
+    Args:
+        data: Данные от collect_vsl_scenario_data
+        scenario_name: Название сценария для заголовков
+        save_plots: Сохранять ли графики в файлы
+    """
+    if data is None or len(data['T_prime']) == 0:
+        print("Нет данных для построения графиков VSL")
+        return
+    
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig.suptitle(f'Анализ VSL сценария "{scenario_name}" в зависимости от T\'', fontsize=16)
+    
+    # График 1: PID коэффициенты
+    axes[0, 0].plot(data['T_prime'], data['kp'], 'r-', label='Kp', linewidth=2)
+    axes[0, 0].plot(data['T_prime'], data['ki'], 'g-', label='Ki', linewidth=2)
+    axes[0, 0].plot(data['T_prime'], data['kd'], 'b-', label='Kd', linewidth=2)
+    axes[0, 0].set_xlabel("Время реакции водителя T' (с)")
+    axes[0, 0].set_ylabel("Коэффициенты PID")
+    axes[0, 0].set_title("PID коэффициенты")
+    axes[0, 0].legend()
+    axes[0, 0].grid(True, alpha=0.3)
+    
+    # График 2: Критическая плотность и целевая плотность
+    axes[0, 1].plot(data['T_prime'], data['rho_crit'], 'r-', label='ρ_crit базовая', linewidth=2)
+    axes[0, 1].plot(data['T_prime'], data['target_density'], 'b--', label='ρ_target', linewidth=2)
+    axes[0, 1].set_xlabel("Время реакции водителя T' (с)")
+    axes[0, 1].set_ylabel("Плотность (авто/км)")
+    axes[0, 1].set_title("Критическая и целевая плотность")
+    axes[0, 1].legend()
+    axes[0, 1].grid(True, alpha=0.3)
+    
+    # График 3: Границы VSL
+    axes[1, 0].plot(data['T_prime'], data['vsl_min'], 'r-', label='VSL мин', linewidth=2)
+    axes[1, 0].plot(data['T_prime'], data['vsl_max'], 'b-', label='VSL макс', linewidth=2)
+    axes[1, 0].fill_between(data['T_prime'], data['vsl_min'], data['vsl_max'], alpha=0.3, color='blue')
+    axes[1, 0].set_xlabel("Время реакции водителя T' (с)")
+    axes[1, 0].set_ylabel("Скорость VSL (м/с)")
+    axes[1, 0].set_title("Границы VSL управления")
+    axes[1, 0].legend()
+    axes[1, 0].grid(True, alpha=0.3)
+    
+    # График 4: Запас устойчивости (если доступен)
+    if scenario_name.lower() == "variance" and np.any(data['stability_margin'] != 0):
+        axes[1, 1].plot(data['T_prime'], data['stability_margin'], 'g-', linewidth=2)
+        axes[1, 1].axhline(y=0, color='r', linestyle='--', alpha=0.7, label='Граница устойчивости')
+        axes[1, 1].set_xlabel("Время реакции водителя T' (с)")
+        axes[1, 1].set_ylabel("Запас устойчивости")
+        axes[1, 1].set_title("Запас устойчивости")
+        axes[1, 1].legend()
+        axes[1, 1].grid(True, alpha=0.3)
+    else:
+        # Дополнительный график - отношение целевой к критической плотности
+        ratio = data['target_density'] / data['rho_crit']
+        axes[1, 1].plot(data['T_prime'], ratio, 'purple', linewidth=2)
+        axes[1, 1].set_xlabel("Время реакции водителя T' (с)")
+        axes[1, 1].set_ylabel("ρ_target / ρ_crit")
+        axes[1, 1].set_title("Отношение целевой к критической плотности")
+        axes[1, 1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    if save_plots:
+        filename = f"vsl_analysis_{scenario_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"График VSL анализа сохранен: {filename}")
+    
+    plt.show()
+
+
+def compare_vsl_scenarios(T_prime_values, base_idm_params, scenarios=None, save_plots=True):
+    """
+    Сравнивает различные VSL сценарии.
+    
+    Args:
+        T_prime_values: Массив значений времени реакции водителя
+        base_idm_params: Базовые параметры IDM
+        scenarios: Список сценариев для сравнения (по умолчанию все)
+        save_plots: Сохранять ли графики
+    """
+    if VSLOptimizer is None:
+        print("VSL анализ недоступен - модуль vsl_calculator не найден")
+        return
+    
+    if scenarios is None:
+        scenarios = ["speed", "variance", "wave", "throughput"]
+    
+    # Собираем данные для всех сценариев
+    scenario_data = {}
+    for scenario in scenarios:
+        data = collect_vsl_scenario_data(T_prime_values, base_idm_params, scenario)
+        if data is not None:
+            scenario_data[scenario] = data
+    
+    if not scenario_data:
+        print("Нет данных для сравнения сценариев")
+        return
+    
+    # Строим сравнительные графики
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    fig.suptitle('Сравнение VSL сценариев в зависимости от T\'', fontsize=16)
+    
+    colors = ['red', 'blue', 'green', 'orange']
+    
+    # График 1: Сравнение Kp коэффициентов
+    for i, (scenario, data) in enumerate(scenario_data.items()):
+        axes[0, 0].plot(data['T_prime'], data['kp'], color=colors[i % len(colors)], 
+                       label=f'{scenario}', linewidth=2, marker='o', markersize=3)
+    axes[0, 0].set_xlabel("Время реакции водителя T' (с)")
+    axes[0, 0].set_ylabel("Коэффициент Kp")
+    axes[0, 0].set_title("Сравнение Kp коэффициентов")
+    axes[0, 0].legend()
+    axes[0, 0].grid(True, alpha=0.3)
+    
+    # График 2: Сравнение Ki коэффициентов
+    for i, (scenario, data) in enumerate(scenario_data.items()):
+        axes[0, 1].plot(data['T_prime'], data['ki'], color=colors[i % len(colors)], 
+                       label=f'{scenario}', linewidth=2, marker='s', markersize=3)
+    axes[0, 1].set_xlabel("Время реакции водителя T' (с)")
+    axes[0, 1].set_ylabel("Коэффициент Ki")
+    axes[0, 1].set_title("Сравнение Ki коэффициентов")
+    axes[0, 1].legend()
+    axes[0, 1].grid(True, alpha=0.3)
+    
+    # График 3: Сравнение целевых плотностей
+    for i, (scenario, data) in enumerate(scenario_data.items()):
+        axes[1, 0].plot(data['T_prime'], data['target_density'], color=colors[i % len(colors)], 
+                       label=f'{scenario}', linewidth=2, marker='^', markersize=3)
+    axes[1, 0].set_xlabel("Время реакции водителя T' (с)")
+    axes[1, 0].set_ylabel("Целевая плотность (авто/км)")
+    axes[1, 0].set_title("Сравнение целевых плотностей")
+    axes[1, 0].legend()
+    axes[1, 0].grid(True, alpha=0.3)
+    
+    # График 4: Сравнение максимальных VSL границ
+    for i, (scenario, data) in enumerate(scenario_data.items()):
+        axes[1, 1].plot(data['T_prime'], data['vsl_max'], color=colors[i % len(colors)], 
+                       label=f'{scenario}', linewidth=2, marker='d', markersize=3)
+    axes[1, 1].set_xlabel("Время реакции водителя T' (с)")
+    axes[1, 1].set_ylabel("Максимальная VSL (м/с)")
+    axes[1, 1].set_title("Сравнение максимальных VSL границ")
+    axes[1, 1].legend()
+    axes[1, 1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    if save_plots:
+        filename = f"vsl_scenarios_comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"График сравнения VSL сценариев сохранен: {filename}")
+    
+    plt.show()
+
+# --- КОНЕЦ ДОБАВЛЕННЫХ ФУНКЦИЙ ДЛЯ VSL АНАЛИЗА ---
+
 # +++ ДОБАВЛЕНА ФУНКЦИЯ +++
 def compute_rho_crit(v0: float, T: float, s0: float, veh_length: float = 5.0) -> float:
     """
@@ -1902,7 +2156,7 @@ def main(): # Обернем основной код в функцию main()
     default_sumo_exe_path = "sumo-gui.exe" 
     if "SUMO_HOME" in os.environ:
         # Сначала ищем sumo-gui.exe
-        potential_gui_path = os.path.join(os.getenv("SUMO_HOME"), "bin", "sumo-gui.exe")
+        potential_gui_path = os.path.join(os.getenv("SUMO_HOME"), "bin", "sumo.exe")
         if os.path.isfile(potential_gui_path):
             default_sumo_exe_path = potential_gui_path
         else:
@@ -1936,6 +2190,24 @@ def main(): # Обернем основной код в функцию main()
         "--vsl",
         action="store_true",
         help="Включить VSL управление в запускаемых симуляциях SUMO."
+    )
+    # Новые аргументы для VSL анализа
+    parser.add_argument(
+        "--vsl-analysis",
+        action="store_true",
+        help="Выполнить анализ VSL сценариев в зависимости от времени реакции водителя T'."
+    )
+    parser.add_argument(
+        "--vsl-scenario",
+        type=str,
+        default="speed",
+        choices=["speed", "variance", "wave", "throughput"],
+        help="Сценарий VSL для анализа (по умолчанию: speed)."
+    )
+    parser.add_argument(
+        "--vsl-compare-scenarios",
+        action="store_true",
+        help="Сравнить все VSL сценарии на одном графике."
     )
     # Удаляем --vsl-config-file, так как параметры будут передаваться через JSON
     # parser.add_argument(
@@ -2033,7 +2305,7 @@ def main(): # Обернем основной код в функцию main()
     target_Q_veh_per_hour = 1800 
     target_Q_veh_per_sec = target_Q_veh_per_hour / 3600.0 
     # T_sweep_values_for_Q = np.linspace(0.8, 2.5, 50) # Старое значение
-    T_sweep_values_for_Q = np.linspace(0.8, 2.5, 50) # Уменьшено для ускорения тестов с SUMO
+    T_sweep_values_for_Q = np.linspace(0.8, 2.5, 4) # Уменьшено для ускорения тестов с SUMO
     
     data_sweep_T_fixed_Q = collect_data_for_param_sweep(
         param_to_sweep_key='T_safe_time_headway', 
@@ -2056,7 +2328,7 @@ def main(): # Обернем основной код в функцию main()
         )
 
         # <<< Начало добавленного блока для запуска SUMO симуляций >>>
-        if args.run_sumo_simulations:
+        if args.run_sumo_simulations and not args.vsl_analysis:
             print("\\n--- Запуск SUMO симуляций через run_circle_simulation.py (Пример 5) ---")
             
             simulation_results_list = [] # Список для сбора результатов симуляций
@@ -2340,6 +2612,456 @@ def main(): # Обернем основной код в функцию main()
         print(f"Не удалось собрать данные для варьирования T при Q={target_Q_veh_per_hour:.0f} авто/час.")
 
     print("\\nАнализ завершен.") 
+
+    # Пример 6: VSL анализ сценариев (если указан флаг --vsl-analysis)
+    if args.vsl_analysis and VSLOptimizer is not None:
+        print("\n" + "="*70)
+        print("--- АНАЛИЗ VSL СЦЕНАРИЕВ ---")
+        print("="*70)
+        
+        # Диапазон времени реакции водителя T'
+        T_prime_values = np.linspace(0.5, 1.5, 20)
+        
+        if args.vsl_compare_scenarios:
+            print("\n--- Сравнение всех VSL сценариев ---")
+            compare_vsl_scenarios(T_prime_values, params.copy(), save_plots=True)
+        else:
+            print(f"\n--- Анализ VSL сценария: {args.vsl_scenario} ---")
+            
+            # Собираем данные для выбранного сценария
+            vsl_data = collect_vsl_scenario_data(T_prime_values, params.copy(), 
+                                               scenario=args.vsl_scenario, verbose=True)
+            
+            if vsl_data is not None:
+                # Строим графики
+                plot_vsl_scenario_analysis(vsl_data, args.vsl_scenario, save_plots=True)
+                
+                # Выводим некоторую статистику
+                print(f"\nСтатистика для сценария '{args.vsl_scenario}':")
+                print(f"  Диапазон T': {T_prime_values[0]:.2f} - {T_prime_values[-1]:.2f} с")
+                print(f"  Диапазон ρ_crit: {vsl_data['rho_crit'].min():.2f} - {vsl_data['rho_crit'].max():.2f} авто/км")
+                print(f"  Диапазон Kp: {vsl_data['kp'].min():.4f} - {vsl_data['kp'].max():.4f}")
+                print(f"  Диапазон Ki: {vsl_data['ki'].min():.6f} - {vsl_data['ki'].max():.6f}")
+                print(f"  Диапазон Kd: {vsl_data['kd'].min():.4f} - {vsl_data['kd'].max():.4f}")
+                print(f"  Диапазон целевой плотности: {vsl_data['target_density'].min():.2f} - {vsl_data['target_density'].max():.2f} авто/км")
+                
+                # Демонстрация использования VSL оптимизатора
+                print(f"\nПример расчета VSL управления для T'=0.9с и ρ=50 авто/км:")
+                try:
+                    demo_optimizer = VSLOptimizer(0.9, params.copy())
+                    demo_density = 50.0  # авто/км
+                    demo_vsl = demo_optimizer.calculate_vsl_control(args.vsl_scenario, demo_density)
+                    print(f"  VSL = {demo_vsl:.2f} м/с ({demo_vsl*3.6:.1f} км/ч)")
+                    
+                    # Получаем параметры для демонстрации
+                    demo_params = demo_optimizer.get_scenario_params(args.vsl_scenario)
+                    print(f"  Используемые параметры: Kp={demo_params.kp:.3f}, Ki={demo_params.ki:.5f}, Kd={demo_params.kd:.3f}")
+                    print(f"  Целевая плотность: {demo_params.target_density:.2f} авто/км")
+                    print(f"  Границы VSL: {demo_params.vsl_bounds[0]:.1f} - {demo_params.vsl_bounds[1]:.1f} м/с")
+                except Exception as e:
+                    print(f"  Ошибка демонстрации: {e}")
+            else:
+                print(f"Не удалось собрать данные для сценария '{args.vsl_scenario}'")
+                
+    elif args.vsl_analysis and VSLOptimizer is None:
+        print("\n--- VSL анализ недоступен ---")
+        print("Модуль vsl_calculator не найден. Убедитесь, что файл src/vsl_calculator.py существует.")
+    
+    print("\\nАнализ завершен.")
+
+    # Пример 7: Запуск SUMO симуляций с VSL (если указаны соответствующие флаги)
+    if args.vsl_analysis and args.run_sumo_simulations and VSLOptimizer is not None:
+        print("\n" + "="*70)
+        print("--- ЗАПУСК SUMO СИМУЛЯЦИЙ С VSL СЦЕНАРИЯМИ ---")
+        print("="*70)
+        
+        # Используем ТЕ ЖЕ данные data_sweep_T_fixed_Q для расчета количества автомобилей
+        if not data_sweep_T_fixed_Q or len(data_sweep_T_fixed_Q['param_values']) == 0:
+            print("❌ Нет данных data_sweep_T_fixed_Q для VSL симуляций!")
+            print("   Убедитесь, что блок 'Варьирование T при фиксированном Q' выполнился корректно.")
+        else:
+            # Сценарии VSL для тестирования
+            if args.vsl_compare_scenarios:
+                vsl_scenarios = ["none", "speed", "variance", "wave", "throughput"]
+            else:
+                vsl_scenarios = [args.vsl_scenario]
+            
+            # Значения T' (время реакции водителя для VSL) от 0.9 до 1.1 с шагом 0.1
+            T_prime_test_values = [0.9, 1.0, 1.1]
+            
+            print(f"Планируется запуск VSL симуляций:")
+            print(f"  VSL сценарии: {vsl_scenarios}")
+            print(f"  Значения T' (время реакции водителя): {T_prime_test_values}")
+            print(f"  Варьирование T (IDM): {len(data_sweep_T_fixed_Q['param_values'])} значений из data_sweep_T_fixed_Q")
+            
+            # Определяем директорию для результатов
+            timestamp_vsl = datetime.now().strftime("%Y%m%d_%H%M%S")
+            vsl_results_base_dir = os.path.join("results", f"vsl_sumo_analysis_{timestamp_vsl}")
+            os.makedirs(vsl_results_base_dir, exist_ok=True)
+            
+            # Расчет общего количества симуляций
+            total_vsl_simulations = len(vsl_scenarios) * len(T_prime_test_values) * len(data_sweep_T_fixed_Q['param_values'])
+            current_vsl_sim = 0
+            successful_vsl_simulations = 0
+            
+            print(f"\nНачинаем запуск {total_vsl_simulations} VSL симуляций...")
+            
+            simulation_results_list = []  # Список для сбора результатов VSL симуляций
+            sim_params_base = params.copy()
+            vehicle_length_for_calc = sim_params_base['l_vehicle_length']
+            
+            # Тройной цикл: сценарии VSL × значения T' × равновесные состояния T
+            for vsl_scenario in vsl_scenarios:
+                for T_prime in T_prime_test_values:
+                    for i in range(len(data_sweep_T_fixed_Q['param_values'])):
+                        current_vsl_sim += 1
+                        
+                        # Получаем равновесные данные из data_sweep_T_fixed_Q (ТА ЖЕ логика!)
+                        current_T = data_sweep_T_fixed_Q['param_values'][i]
+                        current_v_e = data_sweep_T_fixed_Q['v_star'][i]
+                        current_s_e_net = data_sweep_T_fixed_Q['s_star_net'][i]
+                        
+                        # Проверяем валидность равновесного состояния
+                        if math.isnan(current_v_e) or math.isnan(current_s_e_net) or current_v_e < 0 or current_s_e_net < 0:
+                            print(f"Пропуск VSL симуляции для T={current_T:.3f}с, T'={T_prime:.1f}: "
+                                  f"невалидное равновесное состояние (v_e={current_v_e:.2f}, s_e_net={current_s_e_net:.2f})")
+                            continue
+                        
+                        # Рассчитываем количество автомобилей (ТА ЖЕ формула!)
+                        current_total_spacing = current_s_e_net + vehicle_length_for_calc
+                        if current_total_spacing <= 1e-3:
+                            print(f"Предупреждение: Общий интервал ({current_total_spacing:.3f}) слишком мал для "
+                                  f"T={current_T:.3f}, T'={T_prime:.1f}. Пропуск VSL симуляции.")
+                            continue
+                        
+                        num_vehicles_for_sim = round(FIXED_RING_LENGTH / current_total_spacing)
+                        if num_vehicles_for_sim <= 0:
+                            print(f"Предупреждение: Расчетное количество машин ({num_vehicles_for_sim}) некорректно для "
+                                  f"T={current_T:.3f}, T'={T_prime:.1f}. Пропуск VSL симуляции.")
+                            continue
+                        
+                        # Создаем уникальное имя для результатов VSL симуляции
+                        simulation_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        vsl_sim_name = f"VSL_{vsl_scenario}_Tprime{T_prime:.1f}_T{current_T:.3f}_v{current_v_e:.2f}_s{current_s_e_net:.2f}_N{num_vehicles_for_sim}_{simulation_timestamp}"
+                        current_vsl_output_dir = os.path.join(vsl_results_base_dir, vsl_sim_name)
+                        os.makedirs(current_vsl_output_dir, exist_ok=True)
+                        
+                        print(f"\n[VSL {current_vsl_sim}/{total_vsl_simulations}] Запуск: {vsl_scenario} сценарий")
+                        print(f"  T'={T_prime:.1f}с, T={current_T:.3f}с, v_e={current_v_e:.2f} м/с, s_e_net={current_s_e_net:.2f} м, N_veh={num_vehicles_for_sim}")
+                        print(f"  Выходная директория: {current_vsl_output_dir}")
+                        
+                        # Формируем команду для VSL симуляции
+                        cmd_vsl_sim = [
+                            "python", "src/run_circle_simulation.py",
+                            "--config-name", CONFIG_NAME_FOR_SUMO,
+                            "--max-num-vehicles", str(num_vehicles_for_sim),
+                            "--sumo-binary", args.sumo_binary,
+                            "--sumo-tools-dir", args.sumo_tools_dir,
+                            "--output-dir", current_vsl_output_dir
+                        ]
+                        
+                        # Добавляем VSL параметры только если сценарий не "none"
+                        if vsl_scenario != "none":
+                            cmd_vsl_sim.extend([
+                                "--vsl",  # Включаем VSL
+                                "--vsl-scenario", vsl_scenario,
+                                "--T-prime", str(T_prime)
+                            ])
+                        
+                        print(f"  Команда VSL симуляции: {' '.join(cmd_vsl_sim)}")
+                        
+                        vsl_sim_success = False
+                        try:
+                            # Запускаем VSL симуляцию
+                            start_time = time.time()
+                            completed_process_vsl = subprocess.run(
+                                cmd_vsl_sim, 
+                                check=False, 
+                                capture_output=True, 
+                                text=True, 
+                                errors='ignore',
+                                timeout=600  # 10 минут таймаут
+                            )
+                            
+                            execution_time = time.time() - start_time
+                            
+                            if completed_process_vsl.returncode == 0:
+                                print(f"  ✅ VSL симуляция успешно завершена за {execution_time:.1f}с")
+                                vsl_sim_success = True
+                                successful_vsl_simulations += 1
+                                
+                                # Ищем созданные файлы результатов
+                                if os.path.exists(current_vsl_output_dir):
+                                    result_files = []
+                                    for root, dirs, files in os.walk(current_vsl_output_dir):
+                                        result_files.extend([os.path.join(root, f) for f in files if f.endswith(('.csv', '.json'))])
+                                    
+                                    if result_files:
+                                        print(f"  📁 Создано файлов: {len(result_files)}")
+                                        
+                                        # Ищем VSL лог
+                                        vsl_logs = [f for f in result_files if 'vsl_log' in os.path.basename(f)]
+                                        if vsl_logs:
+                                            print(f"  📊 VSL лог: {os.path.basename(vsl_logs[0])}")
+                                    else:
+                                        print(f"  ⚠️ Файлы результатов не найдены в {current_vsl_output_dir}")
+                                else:
+                                    print(f"  ⚠️ Директория результатов не создана")
+                                    
+                            else:
+                                print(f"  ❌ VSL симуляция завершилась с ошибкой (код {completed_process_vsl.returncode}) за {execution_time:.1f}с")
+                                if completed_process_vsl.stderr:
+                                    # Показываем только последние строки ошибки
+                                    stderr_lines = completed_process_vsl.stderr.strip().split('\n')
+                                    print(f"  Последние строки ошибки:")
+                                    for line in stderr_lines[-3:]:
+                                        print(f"    {line}")
+                                        
+                        except subprocess.TimeoutExpired:
+                            print(f"  ⏰ VSL симуляция превысила таймаут (>10 минут)")
+                        except Exception as e:
+                            print(f"  💥 Исключение при VSL симуляции: {e}")
+                        
+                        # Если симуляция успешна, сохраняем данные для анализа
+                        if vsl_sim_success:
+                            simulation_results_list.append({
+                                'scenario': vsl_scenario,
+                                'T_prime': T_prime,
+                                'T_idm': current_T,
+                                'v_equilibrium': current_v_e,
+                                's_net_equilibrium': current_s_e_net,
+                                'num_vehicles': num_vehicles_for_sim,
+                                'output_dir': current_vsl_output_dir,
+                                'sim_name': vsl_sim_name
+                            })
+            
+            # Итоговая статистика VSL симуляций
+            print(f"\n" + "="*50)
+            print(f"ИТОГИ ЗАПУСКА VSL СИМУЛЯЦИЙ:")
+            print(f"  Всего запущено: {total_vsl_simulations}")
+            print(f"  Успешно завершено: {successful_vsl_simulations}")
+            print(f"  Неудачных: {total_vsl_simulations - successful_vsl_simulations}")
+            print(f"  Результаты сохранены в: {vsl_results_base_dir}")
+            
+            if successful_vsl_simulations > 0:
+                print(f"\n🎉 Успешно выполнено {successful_vsl_simulations} VSL симуляций!")
+                
+                # Автоматический анализ результатов VSL симуляций
+                print(f"\n" + "="*70)
+                print("--- АВТОМАТИЧЕСКИЙ АНАЛИЗ РЕЗУЛЬТАТОВ VSL СИМУЛЯЦИЙ ---")
+                print("="*70)
+                
+                # Словарь для сбора результатов анализа
+                vsl_analysis_results = {}
+                analyzed_vsl_count = 0
+                
+                # Анализируем каждую успешную VSL симуляцию
+                for sim_result in simulation_results_list:
+                    current_vsl_output_dir = sim_result['output_dir']
+                    sim_name = sim_result['sim_name']
+                    
+                    if not os.path.exists(current_vsl_output_dir):
+                        print(f"⚠️ Директория VSL результатов не найдена: {current_vsl_output_dir}")
+                        continue
+                    
+                    # Ищем поддиректорию с результатами (с timestamp) - ТА ЖЕ логика!
+                    potential_subdirs = [d for d in os.listdir(current_vsl_output_dir) 
+                                       if os.path.isdir(os.path.join(current_vsl_output_dir, d))]
+                    
+                    if not potential_subdirs:
+                        print(f"⚠️ Поддиректория VSL результатов не найдена для {sim_name}")
+                        continue
+                    
+                    # Берем первую (должна быть единственная)
+                    actual_results_dir = os.path.join(current_vsl_output_dir, potential_subdirs[0])
+                    
+                    # Проверяем наличие FCD файла
+                    fcd_files = [f for f in os.listdir(actual_results_dir) 
+                               if f.startswith("fcd_output_") and f.endswith(".csv")]
+                    
+                    if not fcd_files:
+                        print(f"⚠️ FCD файл не найден для VSL симуляции {sim_name}")
+                        continue
+                    
+                    print(f"\n[VSL Анализ {analyzed_vsl_count + 1}] Анализ результатов: {sim_name}")
+                    
+                    # Запускаем analyze_circle_data.py для VSL результатов
+                    analyze_cmd = [
+                        "python",
+                        os.path.join("src", "analyze_circle_data.py"),
+                        "--results-dir", actual_results_dir,
+                        "--length", str(FIXED_RING_LENGTH)  # Длина кольца
+                    ]
+                    
+                    try:
+                        start_time = time.time()
+                        analyze_process = subprocess.run(
+                            analyze_cmd,
+                            check=False,
+                            capture_output=True,
+                            text=True,
+                            errors='ignore',
+                            timeout=120  # 2 минуты на анализ
+                        )
+                        
+                        analysis_time = time.time() - start_time
+                        
+                        if analyze_process.returncode == 0:
+                            print(f"  ✅ VSL анализ завершен за {analysis_time:.1f}с")
+                            analyzed_vsl_count += 1
+                            
+                            # Ищем analysis_summary.json
+                            analysis_subdirs = [d for d in os.listdir(actual_results_dir) 
+                                              if d.startswith("analysis_") and 
+                                              os.path.isdir(os.path.join(actual_results_dir, d))]
+                            
+                            if analysis_subdirs:
+                                analysis_dir = os.path.join(actual_results_dir, analysis_subdirs[0])
+                                summary_file = os.path.join(analysis_dir, "analysis_summary.json")
+                                
+                                if os.path.exists(summary_file):
+                                    try:
+                                        with open(summary_file, 'r', encoding='utf-8') as f:
+                                            summary_data = json.load(f)
+                                        
+                                        # Сохраняем результаты анализа VSL
+                                        key = f"{sim_result['scenario']}_Tprime{sim_result['T_prime']:.1f}_T{sim_result['T_idm']:.3f}"
+                                        vsl_analysis_results[key] = {
+                                            'scenario': sim_result['scenario'],
+                                            'T_prime': sim_result['T_prime'],
+                                            'T_idm': sim_result['T_idm'],
+                                            'num_vehicles': sim_result['num_vehicles'],
+                                            'waves_observed': summary_data.get('waves_observed', None),
+                                            'mean_speed': summary_data.get('mean_speed', None),
+                                            'speed_std_dev': summary_data.get('mean_speed_std_dev', None),
+                                            'lambda_exp': summary_data.get('lambda_exp', None),
+                                            'flow_efficiency': summary_data.get('mean_flow', None),
+                                            'sim_name': sim_name
+                                        }
+                                        
+                                        print(f"  📊 Волны: {summary_data.get('waves_observed', 'N/A')}, "
+                                             f"Ср.скорость: {summary_data.get('mean_speed', 0):.1f} м/с, "
+                                             f"Отклонение: {summary_data.get('mean_speed_std_dev', 0):.2f}")
+                                        
+                                    except (json.JSONDecodeError, Exception) as e:
+                                        print(f"  ⚠️ Ошибка чтения VSL summary: {e}")
+                                else:
+                                    print(f"  ⚠️ Файл analysis_summary.json не найден для VSL")
+                            else:
+                                print(f"  ⚠️ Директория VSL анализа не найдена")
+                                
+                        else:
+                            print(f"  ❌ Ошибка VSL анализа (код {analyze_process.returncode}) за {analysis_time:.1f}с")
+                            if analyze_process.stderr:
+                                stderr_lines = analyze_process.stderr.strip().split('\n')
+                                for line in stderr_lines[-2:]:
+                                    print(f"    {line}")
+                                    
+                    except subprocess.TimeoutExpired:
+                        print(f"  ⏰ Таймаут VSL анализа (>2 минут)")
+                    except Exception as e:
+                        print(f"  💥 Исключение при VSL анализе: {e}")
+                
+                # Сводный отчет по результатам VSL
+                print(f"\n" + "="*60)
+                print(f"СВОДНЫЙ ОТЧЕТ ПО ЭФФЕКТИВНОСТИ VSL СЦЕНАРИЕВ")
+                print(f"="*60)
+                print(f"Проанализировано VSL симуляций: {analyzed_vsl_count} из {successful_vsl_simulations}")
+                
+                if vsl_analysis_results:
+                    # Группируем результаты по сценариям VSL
+                    scenarios_summary = {}
+                    for key, data in vsl_analysis_results.items():
+                        scenario = data['scenario']
+                        if scenario not in scenarios_summary:
+                            scenarios_summary[scenario] = {
+                                'total_sims': 0,
+                                'waves_detected': 0,
+                                'mean_speeds': [],
+                                'speed_variances': [],
+                                'flow_efficiencies': []
+                            }
+                        
+                        scenarios_summary[scenario]['total_sims'] += 1
+                        if data['waves_observed']:
+                            scenarios_summary[scenario]['waves_detected'] += 1
+                        if data['mean_speed'] is not None:
+                            scenarios_summary[scenario]['mean_speeds'].append(data['mean_speed'])
+                        if data['speed_std_dev'] is not None:
+                            scenarios_summary[scenario]['speed_variances'].append(data['speed_std_dev'])
+                        if data['flow_efficiency'] is not None:
+                            scenarios_summary[scenario]['flow_efficiencies'].append(data['flow_efficiency'])
+                    
+                    # Выводим сводку по каждому сценарию VSL
+                    print(f"\n📈 ЭФФЕКТИВНОСТЬ ПО СЦЕНАРИЯМ VSL:")
+                    for scenario, stats in scenarios_summary.items():
+                        print(f"\n🎯 {scenario.upper()} сценарий:")
+                        print(f"  Симуляций: {stats['total_sims']}")
+                        print(f"  Волны обнаружены: {stats['waves_detected']}/{stats['total_sims']} "
+                             f"({100*stats['waves_detected']/stats['total_sims']:.1f}%)")
+                        
+                        if stats['mean_speeds']:
+                            avg_speed = np.mean(stats['mean_speeds'])
+                            print(f"  Средняя скорость: {avg_speed:.1f} м/с ({avg_speed*3.6:.1f} км/ч)")
+                        
+                        if stats['speed_variances']:
+                            avg_variance = np.mean(stats['speed_variances'])
+                            print(f"  Среднее отклонение скорости: {avg_variance:.2f} м/с")
+                        
+                        if stats['flow_efficiencies']:
+                            avg_flow = np.mean(stats['flow_efficiencies'])
+                            print(f"  Средний поток: {avg_flow:.2f} авто/с")
+                    
+                    # Рейтинг сценариев VSL по эффективности
+                    print(f"\n🏆 РЕЙТИНГ VSL СЦЕНАРИЕВ (по минимизации волн):")
+                    scenario_ratings = []
+                    for scenario, stats in scenarios_summary.items():
+                        wave_rate = stats['waves_detected'] / stats['total_sims'] if stats['total_sims'] > 0 else 1.0
+                        avg_speed = np.mean(stats['mean_speeds']) if stats['mean_speeds'] else 0
+                        avg_variance = np.mean(stats['speed_variances']) if stats['speed_variances'] else float('inf')
+                        
+                        # Простая оценка эффективности (меньше волн = лучше)
+                        efficiency_score = (1 - wave_rate) * 100
+                        scenario_ratings.append((scenario, efficiency_score, wave_rate, avg_speed, avg_variance))
+                    
+                    # Сортируем по эффективности (больше балов = лучше)
+                    scenario_ratings.sort(key=lambda x: x[1], reverse=True)
+                    
+                    for i, (scenario, score, wave_rate, avg_speed, avg_var) in enumerate(scenario_ratings):
+                        print(f"  {i+1}. {scenario.upper()}: {score:.1f} баллов "
+                             f"(волны: {wave_rate*100:.1f}%, скорость: {avg_speed:.1f} м/с)")
+                    
+                    # Сохраняем детальные результаты VSL в JSON
+                    results_json_path = os.path.join(vsl_results_base_dir, "vsl_analysis_summary.json")
+                    try:
+                        with open(results_json_path, 'w', encoding='utf-8') as f:
+                            json.dump({
+                                'timestamp': timestamp_vsl,
+                                'scenarios_tested': list(vsl_scenarios),
+                                'T_prime_values': T_prime_test_values,
+                                'T_idm_range': [float(data_sweep_T_fixed_Q['param_values'][0]), 
+                                              float(data_sweep_T_fixed_Q['param_values'][-1])],
+                                'total_simulations': total_vsl_simulations,
+                                'successful_simulations': successful_vsl_simulations,
+                                'detailed_results': vsl_analysis_results,
+                                'scenarios_summary': scenarios_summary,
+                                'scenario_rankings': scenario_ratings
+                            }, f, indent=2, ensure_ascii=False)
+                        print(f"\n💾 Детальные VSL результаты сохранены: {results_json_path}")
+                    except Exception as e:
+                        print(f"\n⚠️ Ошибка сохранения VSL JSON: {e}")
+                    else:
+                        print("\n⚠️ Нет данных для создания сводного VSL отчета")
+                else:
+                    print(f"\n❌ Все VSL симуляции завершились неудачно. Проверьте настройки SUMO.")
+            else:
+                print(f"\n❌ Все VSL симуляции завершились неудачно. Проверьте настройки SUMO.")
+    
+    elif args.vsl_analysis and args.run_sumo_simulations and VSLOptimizer is None:
+        print("\n--- VSL симуляции недоступны ---")
+        print("Модуль vsl_calculator не найден. VSL симуляции не могут быть запущены.")
+    
+    print("\\nАнализ завершен.")
 
 
 if __name__ == "__main__":

@@ -248,12 +248,44 @@ def run_simulation(sumo_binary, temp_sumocfg_file, results_dir, config_name, tim
         # --- ИНИЦИАЛИЗАЦИЯ VSL CONTROLLER ПОСЛЕ TRACI.CONNECT ---
         if vsl_init_params and VSL_CONTROLLER_AVAILABLE:
             try:
-                # Устанавливаем актуальное TraCI соединение
-                vsl_init_params_with_traci = {**vsl_init_params, "traci_conn": traci}
-                vsl_controller_instance = VSLController(**vsl_init_params_with_traci)
-                print("VSLController успешно инициализирован.")
+                # Проверяем режим работы: сценарий или статические параметры
+                if vsl_init_params.get("use_scenario_mode", False):
+                    # НОВАЯ ЛОГИКА: Создание контроллера с математически обоснованным сценарием
+                    scenario = vsl_init_params["scenario"]
+                    T_prime = vsl_init_params["T_prime"]
+                    idm_params = vsl_init_params.get("idm_params", {})
+                    
+                    # Путь к файлу лога
+                    vsl_log_full_path = os.path.join(results_dir, vsl_init_params["log_csv_filename"])
+                    
+                    print(f"Создание динамического VSL контроллера: сценарий='{scenario}', T'={T_prime:.2f}с")
+                    
+                    vsl_controller_instance = VSLController.create_with_scenario(
+                        traci_conn=traci,
+                        scenario=scenario,
+                        T_prime=T_prime,
+                        ctrl_segments_lanes=vsl_init_params["ctrl_segments_lanes"],
+                        vsl_detector_id=vsl_init_params["vsl_detector_id"],
+                        vsl_detector_length_m=vsl_init_params["vsl_detector_length_m"],
+                        log_csv_full_path=vsl_log_full_path,
+                        sim_step_length=vsl_init_params["sim_step_length"],
+                        ts_control_interval=vsl_init_params["ts_control_interval"],
+                        idm_params=idm_params,
+                        stability_data=None,  # Можно добавить поддержку в будущем
+                        enabled=vsl_init_params["enabled"]
+                    )
+                    print(f"Динамический VSL контроллер успешно создан для сценария '{scenario}'")
+                    
+                else:
+                    # СТАРАЯ ЛОГИКА: Статические параметры (обратная совместимость)
+                    print("Создание статического VSL контроллера с фиксированными параметрами")
+                    vsl_controller_instance = VSLController(**vsl_init_params)
+                    print("Статический VSL контроллер успешно инициализирован")
+                    
             except Exception as e:
                 print(f"ОШИБКА VSL: Не удалось инициализировать VSLController: {e}")
+                import traceback
+                traceback.print_exc()
                 vsl_controller_instance = None # Убедимся, что он None если инициализация не удалась
         
         # --- ИНИЦИАЛИЗАЦИЯ RealTimeWaveDetector (ТОЛЬКО ЕСЛИ VSL НЕ АКТИВЕН) ---
@@ -396,7 +428,27 @@ def main():
     parser.add_argument(
         "--vsl-params-json",
         type=str,
-        help="JSON строка с параметрами для VSLController."
+        help="JSON строка с параметрами для VSLController (устаревший способ)."
+    )
+    # НОВЫЕ АРГУМЕНТЫ ДЛЯ МАТЕМАТИЧЕСКИ ОБОСНОВАННЫХ СЦЕНАРИЕВ
+    parser.add_argument(
+        "--vsl-scenario",
+        type=str,
+        choices=["speed", "variance", "wave", "throughput"],
+        help="Математически обоснованный сценарий VSL: speed (оптимизация средней скорости), "
+             "variance (минимизация дисперсии), wave (подавление волн), throughput (максимизация потока)."
+    )
+    parser.add_argument(
+        "--T-prime",
+        type=float,
+        default=0.9,
+        help="Время реакции водителя T' в секундах (диапазон 0.5-1.5). По умолчанию: 0.9."
+    )
+    parser.add_argument(
+        "--idm-params",
+        type=str,
+        help="IDM параметры в формате 'v0,T,s0' (например, '30.0,1.5,2.0'). "
+             "Если не указано, используются значения по умолчанию."
     )
     # --- КОНЕЦ ДОБАВЛЕННЫХ АРГУМЕНТОВ ---
 
@@ -487,9 +539,49 @@ def main():
     if args.vsl:
         if not VSL_CONTROLLER_AVAILABLE:
             print("ОШИБКА VSL: VSLController не был импортирован. VSL не будет запущен.")
-        elif not args.vsl_params_json:
-            print("ОШИБКА VSL: Флаг --vsl указан, но --vsl-params-json не предоставлен. VSL не будет запущен.")
-        else:
+        elif args.vsl_scenario:
+            # НОВАЯ ЛОГИКА: Математически обоснованные сценарии
+            try:
+                print(f"Инициализация VSL контроллера со сценарием '{args.vsl_scenario}' и T'={args.T_prime:.2f}с")
+                
+                # Парсим IDM параметры если указаны
+                idm_params = {}
+                if args.idm_params:
+                    try:
+                        params = args.idm_params.split(',')
+                        if len(params) >= 3:
+                            idm_params = {
+                                'v0': float(params[0]),
+                                'T': float(params[1]),
+                                's0': float(params[2])
+                            }
+                            print(f"IDM параметры: v0={idm_params['v0']:.1f}, T={idm_params['T']:.1f}, s0={idm_params['s0']:.1f}")
+                    except (ValueError, IndexError) as e:
+                        print(f"ПРЕДУПРЕЖДЕНИЕ: Не удалось распарсить --idm-params: {e}")
+                        idm_params = {}
+                
+                # Настройки для динамического VSL контроллера
+                controller_init_params = {
+                    "use_scenario_mode": True,
+                    "scenario": args.vsl_scenario,
+                    "T_prime": args.T_prime,
+                    "idm_params": idm_params,
+                    "ctrl_segments_lanes": ["a_0"],  # Стандартная полоса для кольца
+                    "vsl_detector_id": "det_0",  # Первый детектор
+                    "vsl_detector_length_m": DETECTOR_SPACING_M,
+                    "log_csv_filename": f"vsl_log_{args.vsl_scenario}_{timestamp}.csv",
+                    "sim_step_length": args.step_length,
+                    "ts_control_interval": 10.0,  # Интервал управления VSL
+                    "enabled": True
+                }
+                print(f"VSL контроллер подготовлен для сценария '{args.vsl_scenario}'")
+                
+            except Exception as e:
+                print(f"ОШИБКА VSL: Непредвиденная ошибка при подготовке сценария VSL: {e}")
+                controller_init_params = None
+                
+        elif args.vsl_params_json:
+            # СТАРАЯ ЛОГИКА: Статические параметры из JSON (обратная совместимость)
             try:
                 vsl_params_from_json = json.loads(args.vsl_params_json)
                 print(f"Попытка инициализации VSLController с параметрами из JSON: {vsl_params_from_json}")
@@ -508,6 +600,7 @@ def main():
                     print(f"Путь для лога VSL: {vsl_log_full_path}")
 
                     controller_init_params = {
+                        "use_scenario_mode": False,
                         "traci_conn": None, # Будет установлено в run_simulation после запуска traci
                         "idm_v0_default": vsl_params_from_json["idm_v0_default"],
                         "ctrl_segments_lanes": vsl_params_from_json["ctrl_segments_lanes"],
@@ -523,13 +616,15 @@ def main():
                         "sim_step_length": args.step_length, # <<< ИСПОЛЬЗУЕМ args.step_length
                         "enabled": True
                     }
-                    print("Параметры для VSLController подготовлены.")
+                    print("Параметры для VSLController подготовлены (статический режим).")
             except json.JSONDecodeError:
                 print("ОШИБКА VSL: Не удалось декодировать JSON из --vsl-params-json.")
             except KeyError as e:
                 print(f"ОШИБКА VSL: Отсутствует ключ {e} в параметрах VSL из JSON.")
             except Exception as e:
                 print(f"ОШИБКА VSL: Непредвиденная ошибка при обработке параметров VSL: {e}")
+        else:
+            print("ОШИБКА VSL: Флаг --vsl указан, но не предоставлен ни --vsl-scenario, ни --vsl-params-json.")
     # --- КОНЕЦ БЛОКА ИЗМЕНЕНИЙ ДЛЯ VSL В MAIN ---
 
     # Запускаем симуляцию

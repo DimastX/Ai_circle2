@@ -80,6 +80,15 @@ else:
 import traci
 from traci.exceptions import TraCIException
 
+# НОВОЕ: Импорт VSLOptimizer для динамического расчета параметров
+try:
+    from vsl_calculator import VSLOptimizer, VSLParams, get_vsl_params_for_scenario
+    VSL_CALCULATOR_AVAILABLE = True
+except ImportError:
+    logger = logging.getLogger(__name__)
+    logger.warning("VSLOptimizer недоступен. Используется статическая конфигурация.")
+    VSL_CALCULATOR_AVAILABLE = False
+
 # Настройка логирования
 logger = logging.getLogger(__name__)
 # logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -93,8 +102,87 @@ class VSLController:
     """
     Контроллер для управления переменными скоростными ограничениями (VSL) в SUMO через TraCI.
 
+    Поддерживает два режима работы:
+    1. Статический - с фиксированными PID параметрами (обратная совместимость)
+    2. Динамический - с математически обоснованными сценариями через VSLOptimizer
+
     Теоретическое обоснование (см. docstring модуля)
     """
+    
+    @classmethod
+    def create_with_scenario(cls, 
+                           traci_conn: Any,
+                           scenario: str,
+                           T_prime: float,
+                           ctrl_segments_lanes: List[str],
+                           vsl_detector_id: str,
+                           vsl_detector_length_m: float,
+                           log_csv_full_path: str,
+                           sim_step_length: float,
+                           ts_control_interval: float = 10.0,
+                           idm_params: Optional[dict] = None,
+                           stability_data: Optional[dict] = None,
+                           enabled: bool = True):
+        """
+        Создать VSL контроллер с математически обоснованным сценарием.
+        
+        Args:
+            traci_conn: Активное соединение TraCI
+            scenario: Название сценария ('speed', 'variance', 'wave', 'throughput')
+            T_prime: Время реакции водителя (0.5-1.5с)
+            ctrl_segments_lanes: Список ID полос для управления VSL
+            vsl_detector_id: ID детектора E1 для сбора данных
+            vsl_detector_length_m: Длина зоны детектирования детектора (м)
+            log_csv_full_path: Путь к файлу лога
+            sim_step_length: Длительность шага симуляции (с)
+            ts_control_interval: Интервал управления VSL (с)
+            idm_params: Параметры IDM модели (опционально)
+            stability_data: Данные анализа устойчивости (опционально)
+            enabled: Включен ли контроллер
+        """
+        if not VSL_CALCULATOR_AVAILABLE:
+            raise ImportError("VSLOptimizer недоступен. Невозможно создать контроллер со сценарием.")
+        
+        # Создаем VSL оптимизатор
+        optimizer = VSLOptimizer(T_prime, idm_params)
+        
+        # Получаем параметры для сценария
+        vsl_params = optimizer.get_scenario_params(scenario, stability_data)
+        
+        logger.info(f"Создание VSL контроллера со сценарием '{scenario}': "
+                   f"Kp={vsl_params.kp:.3f}, Ki={vsl_params.ki:.3f}, Kd={vsl_params.kd:.3f}")
+        
+        # Создаем экземпляр контроллера
+        controller = cls(
+            traci_conn=traci_conn,
+            idm_v0_default=optimizer.v0,  # Используем v0 из IDM параметров
+            ctrl_segments_lanes=ctrl_segments_lanes,
+            ts_control_interval=ts_control_interval,
+            kp=vsl_params.kp,
+            ki=vsl_params.ki,
+            kd=vsl_params.kd,
+            v_min_vsl_limit=vsl_params.vsl_bounds[0],
+            rho_crit_target=vsl_params.target_density,
+            vsl_detector_id=vsl_detector_id,
+            vsl_detector_length_m=vsl_detector_length_m,
+            log_csv_full_path=log_csv_full_path,
+            sim_step_length=sim_step_length,
+            enabled=enabled
+        )
+        
+        # Сохраняем дополнительные параметры для динамического управления
+        controller.vsl_optimizer = optimizer
+        controller.scenario = scenario
+        controller.vsl_params = vsl_params
+        controller.v_max_vsl_limit = vsl_params.vsl_bounds[1]
+        controller.use_dynamic_control = True
+        
+        logger.info(f"VSL контроллер создан для сценария '{scenario}' с T'={T_prime:.2f}с")
+        logger.info(f"Целевая плотность: {vsl_params.target_density:.1f} авто/км, "
+                   f"VSL диапазон: [{vsl_params.vsl_bounds[0]:.1f}, {vsl_params.vsl_bounds[1]:.1f}] м/с")
+        
+        return controller
+    
     def __init__(self, 
                  traci_conn: Any, # Ожидается объект соединения traci
                  idm_v0_default: float,
@@ -111,7 +199,7 @@ class VSLController:
                  sim_step_length: float,
                  enabled: bool = True):
         """
-        Инициализация VSL контроллера.
+        Инициализация VSL контроллера (статический режим для обратной совместимости).
 
         Args:
             traci_conn: Активное соединение TraCI.
@@ -152,6 +240,13 @@ class VSLController:
         self.e_k_minus_2 = 0.0
         
         self.current_vsl_speed_m_s = self.idm_v0_default
+
+        # Параметры для динамического управления (устанавливаются в create_with_scenario)
+        self.vsl_optimizer = None
+        self.scenario = None 
+        self.vsl_params = None
+        self.v_max_vsl_limit = self.idm_v0_default
+        self.use_dynamic_control = False
 
         if self.sim_step_length <= 1e-6: # Близко к нулю или отрицательное
             logger.warning(f"sim_step_length ({self.sim_step_length}с) некорректен. "
@@ -223,6 +318,10 @@ class VSLController:
         Выполняет один шаг логики VSL-контроллера.
         Этот метод должен вызываться на каждом шаге симуляции SUMO.
         Логика управления VSL срабатывает только каждые self.Ts секунд.
+        
+        Поддерживает два режима:
+        1. Статический PID контроль (стандартный)
+        2. Динамическое управление с математически обоснованными сценариями
         """
         self.steps_since_last_control += 1
         
@@ -276,27 +375,50 @@ class VSLController:
                     ])
                 return
 
+            # Расчет плотности
             if avg_speed_m_s > 0.1:
                 density_veh_per_km = flow_veh_per_h / (avg_speed_m_s * 3.6)
             else:
                 density_veh_per_km = (1000.0 / 7.0) if num_vehicles_last_step > 0 else 0.0
             
-            error_rho = density_veh_per_km - self.rho_crit
+            # НОВОЕ: Выбор режима управления
+            if self.use_dynamic_control and self.vsl_optimizer:
+                # Динамическое управление с математически обоснованными формулами
+                vsl_target_speed = self._calculate_dynamic_vsl(density_veh_per_km, avg_speed_m_s)
+                
+                # Для совместимости с логированием, рассчитываем PID-подобные значения
+                error_rho = density_veh_per_km - self.rho_crit
+                delta_u_k = self.idm_v0_default - vsl_target_speed
+                u_k = delta_u_k
+                
+                # Обновляем состояние для непрерывности
+                self.e_k_minus_2 = self.e_k_minus_1
+                self.e_k_minus_1 = error_rho
+                self.u_k_minus_1 = u_k
+            else:
+                # Стандартное PID управление
+                error_rho = density_veh_per_km - self.rho_crit
 
-            delta_u_k = (self.Kp * (error_rho - self.e_k_minus_1) +
-                         self.Ki * self.Ts * error_rho)
-            if self.Ts > 1e-6:
-                 delta_u_k += self.Kd * (error_rho - 2 * self.e_k_minus_1 + self.e_k_minus_2) / self.Ts
-            
-            u_k = self.u_k_minus_1 + delta_u_k
-            
-            vsl_target_speed = self.idm_v0_default - u_k 
-            vsl_target_speed = max(self.v_min, min(vsl_target_speed, self.idm_v0_default))
-            
-            self.e_k_minus_2 = self.e_k_minus_1
-            self.e_k_minus_1 = error_rho
-            self.u_k_minus_1 = u_k
+                delta_u_k = (self.Kp * (error_rho - self.e_k_minus_1) +
+                             self.Ki * self.Ts * error_rho)
+                if self.Ts > 1e-6:
+                     delta_u_k += self.Kd * (error_rho - 2 * self.e_k_minus_1 + self.e_k_minus_2) / self.Ts
+                
+                u_k = self.u_k_minus_1 + delta_u_k
+                
+                vsl_target_speed = self.idm_v0_default - u_k 
+                
+                # Обновляем состояние PID
+                self.e_k_minus_2 = self.e_k_minus_1
+                self.e_k_minus_1 = error_rho
+                self.u_k_minus_1 = u_k
 
+            # Применяем ограничения
+            v_min_limit = self.v_min
+            v_max_limit = self.v_max_vsl_limit if self.use_dynamic_control else self.idm_v0_default
+            vsl_target_speed = max(v_min_limit, min(vsl_target_speed, v_max_limit))
+
+            # Применяем VSL к полосам движения
             self.current_vsl_speed_m_s = vsl_target_speed
             for lane_id in self.ctrl_segments_lanes:
                 if lane_id in self.traci_conn.lane.getIDList():
@@ -307,6 +429,7 @@ class VSLController:
         except Exception as e:
             logger.exception(f"Неожиданная ошибка в VSLController.step(): {e}")
 
+        # Логирование результатов
         if self.csv_writer:
             try:
                 self.csv_writer.writerow([
@@ -317,6 +440,36 @@ class VSLController:
             except Exception as e:
                 logger.warning(f"Ошибка записи в лог VSL: {e}")
     
+    def _calculate_dynamic_vsl(self, current_density: float, current_speed: float) -> float:
+        """
+        Расчет VSL с использованием математически обоснованных формул.
+        
+        Args:
+            current_density: Текущая плотность (авто/км)
+            current_speed: Текущая средняя скорость (м/с)
+            
+        Returns:
+            Целевая скорость VSL (м/с)
+        """
+        if not self.vsl_optimizer or not self.scenario:
+            logger.warning("VSL оптимизатор или сценарий не настроены. Используется базовая скорость.")
+            return self.idm_v0_default
+        
+        try:
+            # Рассчитываем управляющее воздействие для текущего сценария
+            vsl_speed = self.vsl_optimizer.calculate_vsl_control(
+                scenario=self.scenario,
+                current_density=current_density
+            )
+            
+            logger.debug(f"Динамическое VSL ({self.scenario}): ρ={current_density:.1f} -> VSL={vsl_speed:.1f} м/с")
+            
+            return vsl_speed
+            
+        except Exception as e:
+            logger.error(f"Ошибка при расчете динамического VSL: {e}")
+            return self.current_vsl_speed_m_s  # Возвращаем текущее значение как fallback
+
     def toggle(self, enabled: bool, sim_time: Optional[float] = None):
         """Включает или отключает VSL контроллер."""
         if self.enabled == enabled:

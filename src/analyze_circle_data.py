@@ -7,6 +7,7 @@ from datetime import datetime
 import json
 from scipy.fft import fft, fftfreq
 import matplotlib.colors as mcolors
+import glob
 
 # Импорт функции для анализа волн
 import eidm_stability_analysis # Предполагаем, что он в src
@@ -420,17 +421,31 @@ def analyze_circle_data(results_dir, L=None, warmup_time=0.0):
                  plt.plot(vehicle_data['time'], vehicle_data['speed'], 'b-', alpha=0.4, linewidth=0.8, label='Другие машины (до 20-й)')
     
     # Добавляем VSL данные, если доступны
-    vsl_log_path = os.path.join(results_dir, "vsl_controller_log.csv")
-    if os.path.exists(vsl_log_path):
+    vsl_files = glob.glob(os.path.join(results_dir, "vsl_log_*.csv"))
+    if vsl_files:
+        vsl_log_path = vsl_files[0]  # Берем первый найденный файл
         try:
             vsl_df = pd.read_csv(vsl_log_path)
             if 'sim_time_s' in vsl_df.columns and 'vsl_applied_speed_m_s' in vsl_df.columns:
                 vsl_time = vsl_df['sim_time_s']
                 vsl_speed = vsl_df['vsl_applied_speed_m_s']
                 plt.plot(vsl_time, vsl_speed, 'g-', linewidth=2, label='VSL скорость', alpha=0.8)
-                print(f"Добавлена VSL скорость на график V(t) ({len(vsl_df)} точек)")
+                print(f"Добавлена VSL скорость на график V(t) из {os.path.basename(vsl_log_path)} ({len(vsl_df)} точек)")
         except Exception as e:
-            print(f"Ошибка при загрузке VSL данных: {e}")
+            print(f"Ошибка при загрузке VSL данных из {vsl_log_path}: {e}")
+    else:
+        # Пробуем старое имя для обратной совместимости
+        vsl_log_path = os.path.join(results_dir, "vsl_controller_log.csv")
+        if os.path.exists(vsl_log_path):
+            try:
+                vsl_df = pd.read_csv(vsl_log_path)
+                if 'sim_time_s' in vsl_df.columns and 'vsl_applied_speed_m_s' in vsl_df.columns:
+                    vsl_time = vsl_df['sim_time_s']
+                    vsl_speed = vsl_df['vsl_applied_speed_m_s']
+                    plt.plot(vsl_time, vsl_speed, 'g-', linewidth=2, label='VSL скорость', alpha=0.8)
+                    print(f"Добавлена VSL скорость на график V(t) ({len(vsl_df)} точек)")
+            except Exception as e:
+                print(f"Ошибка при загрузке VSL данных: {e}")
     
     plt.title('Скорость от времени V(t)')
     plt.xlabel('Время (с)')
