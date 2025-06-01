@@ -2378,6 +2378,7 @@ def main(): # Обернем основной код в функцию main()
                     "--max-num-vehicles", str(num_vehicles_for_sim),
                     "--tau", str(current_T),  # ДОБАВЛЕНО: передаем IDM параметр T
                     "--step-length", "0.1",  # ДОБАВЛЕНО: устанавливаем шаг симуляции 0.1с для корректного action step length
+                    "--data-collection-interval", "1.0",  # ДОБАВЛЕНО: оптимизация данных - сбор каждую секунду
                     "--sumo-binary", args.sumo_binary,
                     "--sumo-tools-dir", args.sumo_tools_dir,
                     "--output-dir", current_run_output_dir # Передаем уникальную директорию для этого запуска
@@ -2759,6 +2760,7 @@ def main(): # Обернем основной код в функцию main()
                             "--max-num-vehicles", str(num_vehicles_for_sim),
                             "--tau", str(current_T),  # ДОБАВЛЕНО: передаем IDM параметр T
                             "--step-length", "0.1",  # ДОБАВЛЕНО: устанавливаем шаг симуляции 0.1с для корректного action step length
+                            "--data-collection-interval", "1.0",  # ДОБАВЛЕНО: оптимизация данных - сбор каждую секунду
                             "--sumo-binary", args.sumo_binary,
                             "--sumo-tools-dir", args.sumo_tools_dir,
                             "--output-dir", current_vsl_output_dir

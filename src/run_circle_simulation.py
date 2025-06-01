@@ -219,7 +219,7 @@ def modify_sumocfg_file(original_sumocfg_file_path, temp_sumocfg_file_dest,
 
 def run_simulation(sumo_binary, temp_sumocfg_file, results_dir, config_name, timestamp, 
                    detector_ids, cameras_coords, detector_sampling_period, simulation_duration_s,
-                   vsl_init_params=None, step_length=0.1):
+                   vsl_init_params=None, step_length=0.1, data_collection_interval=1.0):
     """Запускает симуляцию SUMO с TraCI, собирает данные с детекторов, 
     и опционально управляет VSL.
     """
@@ -306,18 +306,25 @@ def run_simulation(sumo_binary, temp_sumocfg_file, results_dir, config_name, tim
         simulation_step_length = traci.simulation.getDeltaT()
         step_count = 0
         max_steps = int(simulation_duration_s / simulation_step_length) if simulation_step_length > 0 else 0
+        
+        # ОПТИМИЗАЦИЯ: Переменные для контроля частоты сбора данных
+        last_data_collection_time = 0.0
+        print(f"ОПТИМИЗАЦИЯ: Данные VSL и RTWD будут собираться каждые {data_collection_interval:.1f}с вместо каждого шага ({simulation_step_length:.1f}с)")
 
         while current_sumo_time < simulation_duration_s:
             traci.simulationStep()
             current_sumo_time = traci.simulation.getTime()
             step_count += 1
 
-            # --- СБОР ДАННЫХ И УПРАВЛЕНИЕ VSL ---
-            if vsl_controller_instance:
+            # ОПТИМИЗАЦИЯ: Сбор данных только каждую секунду
+            should_collect_data = (current_sumo_time - last_data_collection_time) >= data_collection_interval
+            
+            # --- СБОР ДАННЫХ И УПРАВЛЕНИЕ VSL (КАЖДУЮ СЕКУНДУ) ---
+            if vsl_controller_instance and should_collect_data:
                 vsl_controller_instance.step(current_sumo_time) # VSL контроллер делает свой шаг
             
-            # --- СБОР ДАННЫХ ДЛЯ RealTimeWaveDetector (ТОЛЬКО ЕСЛИ АКТИВЕН) ---
-            if rt_wave_detector: # Если RTWD был инициализирован
+            # --- СБОР ДАННЫХ ДЛЯ RealTimeWaveDetector (КАЖДУЮ СЕКУНДУ) ---
+            if rt_wave_detector and should_collect_data: # Если RTWD был инициализирован
                 try:
                     # Получаем данные с детекторов
                     new_readings = ti.get_detector_data(detector_ids) # detector_ids - это аргумент run_simulation
@@ -328,8 +335,13 @@ def run_simulation(sumo_binary, temp_sumocfg_file, results_dir, config_name, tim
                 except Exception as e:
                     print(f"Непредвиденная ошибка при работе с RealTimeWaveDetector: {e}")
 
-            if step_count % 100 == 0 or step_count == 1 : # Логируем каждые 100 шагов + первый шаг
-                 print(f"TraCI: Собраны данные с детекторов на шаге {step_count}/{max_steps} (Время SUMO: {current_sumo_time:.2f}s)")
+            # Обновляем время последнего сбора данных
+            if should_collect_data:
+                last_data_collection_time = current_sumo_time
+
+            # Логирование прогресса (реже для уменьшения вывода)
+            if step_count % 100 == 0 or step_count == 1: # Логируем каждые 100 шагов + первый шаг
+                print(f"TraCI: Шаг {step_count}/{max_steps} (Время SUMO: {current_sumo_time:.2f}s, Данные собраны: {last_data_collection_time:.1f}s)")
         
         print(f"TraCI: Целевая длительность симуляции ({simulation_duration_s}s) достигнута или превышена на времени {current_sumo_time:.2f}s. Остановка.")
 
@@ -422,6 +434,10 @@ def main():
     parser.add_argument("--simulation-duration", type=float, default=2000.0, help="Длительность симуляции в секундах SUMO.")
     # Добавляем аргумент для шага симуляции
     parser.add_argument("--step-length", type=float, default=0.1, help="Длина шага симуляции SUMO (в секундах), используется VSLController.")
+    # Добавляем аргумент для интервала сбора данных
+    parser.add_argument("--data-collection-interval", type=float, default=1.0, 
+                       help="Интервал сбора данных VSL и RTWD в секундах (по умолчанию: 1.0). "
+                            "Уменьшение может увеличить объем данных в 10 раз при шаге 0.1с.")
     # --- ДОБАВЛЕНЫ АРГУМЕНТЫ ДЛЯ VSL ---
     parser.add_argument(
         "--vsl",
@@ -643,7 +659,8 @@ def main():
         DETECTOR_SAMPLING_PERIOD_S,
         simulation_duration_s_from_cfg, # Используем извлеченное из sumocfg время
         vsl_init_params=controller_init_params, # Передаем параметры для инициализации VSL
-        step_length=args.step_length  # ДОБАВЛЕНО: передаем шаг симуляции
+        step_length=args.step_length,  # ДОБАВЛЕНО: передаем шаг симуляции
+        data_collection_interval=args.data_collection_interval  # Передаем data_collection_interval
     )
 
     if simulation_successful:
