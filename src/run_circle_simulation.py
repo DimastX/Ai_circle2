@@ -56,8 +56,8 @@ def generate_detector_additional_file(output_dir, edge_id, num_detectors, detect
     print(f"Файл с детекторами сохранен: {additional_file_path}")
     return additional_file_path # Возвращаем путь к файлу
 
-def modify_routes_file(original_rou_file, temp_rou_file, num_vehicles, tau_value=None):
-    """Копирует и изменяет файл маршрутов, устанавливая количество ТС и опционально tau."""
+def modify_routes_file(original_rou_file, temp_rou_file, num_vehicles, tau_value=None, action_step_length_value=None):
+    """Копирует и изменяет файл маршрутов, устанавливая количество ТС, опционально tau и actionStepLength."""
     shutil.copyfile(original_rou_file, temp_rou_file)
     tree = ET.parse(temp_rou_file)
     root = tree.getroot()
@@ -71,19 +71,22 @@ def modify_routes_file(original_rou_file, temp_rou_file, num_vehicles, tau_value
     else:
         raise ValueError("Элемент <flow id='1'> не найден в файле маршрутов.")
 
-    # Изменение tau для vType (если tau_value предоставлен)
-    if tau_value is not None:
-        # Ищем vType с id='custom', как в config/circles/input_routes.rou.xml
-        vtype_element = root.find(".//vType[@id='custom']")
-        if vtype_element is not None:
-            current_model = vtype_element.get("carFollowModel")
-            if current_model and "IDM" in current_model: # Проверяем, что используется IDM
+    # Изменение tau и actionStepLength для vType (если значения предоставлены)
+    vtype_element = root.find(".//vType[@id='custom']")
+    if vtype_element is not None:
+        current_model = vtype_element.get("carFollowModel")
+        if current_model and "IDM" in current_model: # Проверяем, что используется IDM
+            if tau_value is not None:
                 vtype_element.set("tau", str(tau_value))
                 print(f"Параметр tau для vType 'custom' изменен на {tau_value} в {temp_rou_file}.")
-            else:
-                print(f"Предупреждение: vType 'custom' (модель: {current_model}) не использует IDM или атрибут carFollowModel отсутствует. Tau не изменен.")
+            
+            if action_step_length_value is not None:
+                vtype_element.set("actionStepLength", str(action_step_length_value))
+                print(f"Параметр actionStepLength для vType 'custom' установлен на {action_step_length_value} в {temp_rou_file}.")
         else:
-            print(f"Предупреждение: Элемент <vType id='custom'> не найден в {temp_rou_file}. Tau не изменен.")
+            print(f"Предупреждение: vType 'custom' (модель: {current_model}) не использует IDM или атрибут carFollowModel отсутствует. Параметры не изменены.")
+    else:
+        print(f"Предупреждение: Элемент <vType id='custom'> не найден в {temp_rou_file}. Параметры не изменены.")
     
     tree.write(temp_rou_file)
 
@@ -216,12 +219,12 @@ def modify_sumocfg_file(original_sumocfg_file_path, temp_sumocfg_file_dest,
 
 def run_simulation(sumo_binary, temp_sumocfg_file, results_dir, config_name, timestamp, 
                    detector_ids, cameras_coords, detector_sampling_period, simulation_duration_s,
-                   vsl_init_params=None):
+                   vsl_init_params=None, step_length=0.1):
     """Запускает симуляцию SUMO с TraCI, собирает данные с детекторов, 
     и опционально управляет VSL.
     """
     
-    sumo_cmd = [sumo_binary, "-c", temp_sumocfg_file, "--no-warnings", "true"]
+    sumo_cmd = [sumo_binary, "-c", temp_sumocfg_file, "--step-length", str(step_length), "--no-warnings", "true"]
     
     # Преобразуем detector_ids в set для быстрой проверки принадлежности
     set_detector_ids = set(detector_ids)
@@ -245,7 +248,7 @@ def run_simulation(sumo_binary, temp_sumocfg_file, results_dir, config_name, tim
 
         print(f"TraCI: Успешно подключено к SUMO. Версия TraCI: {traci.getVersion()}")
 
-        # -- ИНИЦИАЛИЗАЦИЯ VSL CONTROLLER ПОСЛЕ TRACI.CONNECT ---
+        # --- ИНИЦИАЛИЗАЦИЯ VSL CONTROLLER ПОСЛЕ TRACI.CONNECT ---
         if vsl_init_params and VSL_CONTROLLER_AVAILABLE:
             try:
                 # Проверяем режим работы: сценарий или статические параметры
@@ -514,7 +517,7 @@ def main():
 
     temp_rou_filename = f"temp_routes_{timestamp}.rou.xml"
     temp_rou_file_abs_path = os.path.join(current_run_output_dir_for_sim_files, temp_rou_filename)
-    modify_routes_file(original_routes_abs_path, temp_rou_file_abs_path, args.max_num_vehicles, args.tau)
+    modify_routes_file(original_routes_abs_path, temp_rou_file_abs_path, args.max_num_vehicles, args.tau, args.T_prime)
 
     temp_sumocfg_filename = f"temp_config_{timestamp}.sumocfg"
     temp_sumocfg_file_abs_path = os.path.join(current_run_output_dir_for_sim_files, temp_sumocfg_filename)
@@ -639,7 +642,8 @@ def main():
         cameras_coords_np, # detector_positions переименован в cameras_coords_np
         DETECTOR_SAMPLING_PERIOD_S,
         simulation_duration_s_from_cfg, # Используем извлеченное из sumocfg время
-        vsl_init_params=controller_init_params # Передаем параметры для инициализации VSL
+        vsl_init_params=controller_init_params, # Передаем параметры для инициализации VSL
+        step_length=args.step_length  # ДОБАВЛЕНО: передаем шаг симуляции
     )
 
     if simulation_successful:

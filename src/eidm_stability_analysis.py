@@ -2376,6 +2376,8 @@ def main(): # Обернем основной код в функцию main()
                     "python", "src/run_circle_simulation.py",
                     "--config-name", CONFIG_NAME_FOR_SUMO,
                     "--max-num-vehicles", str(num_vehicles_for_sim),
+                    "--tau", str(current_T),  # ДОБАВЛЕНО: передаем IDM параметр T
+                    "--step-length", "0.1",  # ДОБАВЛЕНО: устанавливаем шаг симуляции 0.1с для корректного action step length
                     "--sumo-binary", args.sumo_binary,
                     "--sumo-tools-dir", args.sumo_tools_dir,
                     "--output-dir", current_run_output_dir # Передаем уникальную директорию для этого запуска
@@ -2755,6 +2757,8 @@ def main(): # Обернем основной код в функцию main()
                             "python", "src/run_circle_simulation.py",
                             "--config-name", CONFIG_NAME_FOR_SUMO,
                             "--max-num-vehicles", str(num_vehicles_for_sim),
+                            "--tau", str(current_T),  # ДОБАВЛЕНО: передаем IDM параметр T
+                            "--step-length", "0.1",  # ДОБАВЛЕНО: устанавливаем шаг симуляции 0.1с для корректного action step length
                             "--sumo-binary", args.sumo_binary,
                             "--sumo-tools-dir", args.sumo_tools_dir,
                             "--output-dir", current_vsl_output_dir
